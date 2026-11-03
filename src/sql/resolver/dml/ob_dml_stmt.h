@@ -293,6 +293,8 @@ struct TableItem
   ObRawExpr *snapshot_query_expr_;
   SnapshotQueryType snapshot_query_type_;
   ObRawExpr *function_table_expr_;
+  int64_t file_sql_column_count_ = 0;
+  bool file_sql_csv_header_ = true;
   int64_t ddl_schema_version_;
   int64_t ddl_table_id_;
   // table partition

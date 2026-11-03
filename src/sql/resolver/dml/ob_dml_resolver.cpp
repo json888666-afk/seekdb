@@ -17,6 +17,7 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "config_bridge.h"
 #include "ob_dml_resolver.h"
+#include "sql/engine/basic/ob_file_sql_csv.h"
 #include "sql/resolver/dml/ob_view_table_resolver.h"
 #include "sql/optimizer/ob_optimizer_util.h"
 #include "sql/resolver/dml/ob_default_value_utils.h"
@@ -2698,7 +2699,16 @@ int ObDMLResolver::resolve_table(const ParseNode &parse_tree,
         if (OB_ISNULL(session_info_)) {
           ret = OB_INVALID_ARGUMENT;
         }
-        OZ (resolve_function_table_item(*table_node, table_item));
+          if (OB_SUCC(ret) && table_node->num_child_ == 3) {
+            if (!stmt->is_select_stmt()) {
+              ret = OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL in a non-SELECT statement");
+            } else {
+              OZ (resolve_csv_table_item(*table_node, table_item));
+            }
+          } else {
+            OZ (resolve_function_table_item(*table_node, table_item));
+          }
         break;
       }
       case T_JSON_TABLE_EXPRESSION: {
@@ -3919,6 +3929,129 @@ int ObDMLResolver::resolve_json_table_item(const ParseNode &parse_tree, TableIte
   } else if (OB_FAIL(json_table_infos_.push_back(root_col_def))) {
   } else if (OB_FAIL(resolve_json_table_column_item(*chil_col_node, item,
                                                     root_col_def, -1, id, cur_column_id))) {
+  }
+  return ret;
+}
+
+int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&table_item)
+{
+  int ret = OB_SUCCESS;
+  ObDMLStmt *stmt = get_stmt();
+  bool header = true;
+  ObString path;
+  std::unique_ptr<std::istream> stream;
+  std::vector<file_sql::CsvColumn> columns;
+  CK (OB_NOT_NULL(stmt), OB_NOT_NULL(allocator_), OB_NOT_NULL(session_info_), OB_NOT_NULL(params_.expr_factory_));
+  CK (3 == node.num_child_);
+  if (OB_SUCC(ret)) {
+    const ParseNode *name = node.children_[0];
+    const ParseNode *args = node.children_[1];
+    if (OB_ISNULL(name) || OB_ISNULL(args) || args->num_child_ < 1) {
+      ret = OB_ERR_PARSER_SYNTAX;
+    } else if (0 != ObString(name->str_len_, name->str_value_).case_compare("read_csv")) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "this table function");
+    } else if (OB_ISNULL(args->children_[0]) || T_VARCHAR != args->children_[0]->type_) {
+      ret = OB_ERR_PARSER_SYNTAX;
+    } else {
+      path.assign_ptr(args->children_[0]->str_value_, args->children_[0]->str_len_);
+      bool seen_header = false;
+      bool seen_sample = false;
+      for (int64_t i = 1; OB_SUCC(ret) && i < args->num_child_; ++i) {
+        const ParseNode *opt = args->children_[i];
+        if (OB_ISNULL(opt) || T_OP_EQ != opt->type_ || opt->num_child_ != 2 ||
+            OB_ISNULL(opt->children_[0]) || OB_ISNULL(opt->children_[1]) ||
+            T_COLUMN_REF != opt->children_[0]->type_ || opt->children_[0]->num_child_ != 3 ||
+            OB_NOT_NULL(opt->children_[0]->children_[0]) || OB_NOT_NULL(opt->children_[0]->children_[1]) ||
+            OB_ISNULL(opt->children_[0]->children_[2])) {
+          ret = OB_ERR_PARSER_SYNTAX;
+        } else {
+          const ParseNode *key_node = opt->children_[0]->children_[2];
+          const ParseNode *val = opt->children_[1];
+          const ObString key(key_node->str_len_, key_node->str_value_);
+          if (!seen_header && 0 == key.case_compare("header") && T_BOOL == val->type_) {
+            header = (val->value_ != 0);
+            seen_header = true;
+          } else if (!seen_sample && 0 == key.case_compare("sample_size") &&
+                     ((T_INT == val->type_ && val->value_ == -1) ||
+                      (T_OP_NEG == val->type_ && val->num_child_ == 1 &&
+                       OB_NOT_NULL(val->children_[0]) && T_INT == val->children_[0]->type_ &&
+                       val->children_[0]->value_ == 1))) {
+            seen_sample = true;
+          } else {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "this read_csv option");
+          }
+        }
+      }
+    }
+  }
+  OZ (file_sql::open_local_csv(*session_info_, path, stream));
+  if (OB_SUCC(ret)) {
+    try {
+      columns = file_sql::infer_csv_schema(*stream, header);
+      if (columns.empty()) {
+        ret = OB_INVALID_ARGUMENT;
+      }
+    } catch (const std::exception &e) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_WARN("could not infer read_csv schema", K(ret), "reason", e.what());
+    }
+  }
+  if (OB_SUCC(ret)) {
+    TableItem *item = stmt->create_table_item(*allocator_);
+    CK (OB_NOT_NULL(item));
+    ObString alias;
+    ObString owned_path;
+    ObConstRawExpr *path_expr = nullptr;
+    OZ (ob_write_string(*allocator_, path, owned_path));
+    const auto *alias_node = node.children_[2];
+    if (OB_SUCC(ret) && alias_node != nullptr) {
+      OZ (ob_write_string(*allocator_, ObString(alias_node->str_len_, alias_node->str_value_), alias));
+    } else {
+      OZ (stmt->generate_func_table_name(*allocator_, alias));
+    }
+    const auto cs = ObCharset::get_default_collation(ObCharset::get_default_charset());
+    OZ (ObRawExprUtils::build_const_string_expr(*params_.expr_factory_, ObVarcharType, owned_path, cs, path_expr));
+    if (OB_SUCC(ret)) {
+      item->table_name_ = alias;
+      item->alias_name_ = alias;
+      item->table_id_ = generate_table_id();
+      item->type_ = TableItem::FUNCTION_TABLE;
+      item->function_table_expr_ = path_expr;
+      item->file_sql_column_count_ = columns.size();
+      item->file_sql_csv_header_ = header;
+      OZ (stmt->add_table_item(session_info_, item));
+      for (size_t i = 0; OB_SUCC(ret) && i < columns.size(); ++i) {
+        ObObjMeta meta;
+        switch (columns[i].type) {
+          case file_sql::CsvType::BIGINT: meta.set_type(ObIntType); break;
+          case file_sql::CsvType::DOUBLE: meta.set_type(ObDoubleType); break;
+          case file_sql::CsvType::BOOLEAN: meta.set_type(ObTinyIntType); break;
+          case file_sql::CsvType::DATE: meta.set_type(ObDateType); break;
+          case file_sql::CsvType::DATETIME: meta.set_type(ObDateTimeType); break;
+          default:
+            meta.set_type(ObVarcharType);
+            meta.set_collation_type(cs);
+            meta.set_collation_level(CS_LEVEL_IMPLICIT);
+            break;
+        }
+        ObString column_name;
+        ColumnItem *column = nullptr;
+        const auto &name = columns[i].name;
+        OZ (ob_write_string(*allocator_, ObString(name.size(), name.data()), column_name));
+        OZ (resolve_function_table_column_item(*item, meta,
+                 ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()],
+                 column_name, OB_APP_MIN_COLUMN_ID + i, column));
+      }
+      if (OB_SUCC(ret)) {
+        // Schema inference depends on current file contents, so never cache the plan.
+        auto &hint = stmt->get_query_ctx()->get_query_hint_for_update();
+        auto &global_hint = const_cast<ObGlobalHint &>(hint.get_global_hint());
+        global_hint.plan_cache_policy_ = OB_USE_PLAN_CACHE_NONE;
+        table_item = item;
+      }
+    }
   }
   return ret;
 }
@@ -7475,7 +7608,13 @@ int ObDMLResolver::resolve_function_table_column_item(const TableItem &table_ite
   CK (OB_LIKELY(table_item.is_function_table()));
   CK (OB_NOT_NULL(table_item.function_table_expr_));
   if (OB_SUCC(ret)) {
-    if (table_item.function_table_expr_->get_result_type().is_ext()) {
+    if (table_item.file_sql_column_count_ > 0) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < table_item.file_sql_column_count_; ++i) {
+        ColumnItem *item = get_stmt()->get_column_item(table_item.table_id_, OB_APP_MIN_COLUMN_ID + i);
+        CK (OB_NOT_NULL(item));
+        OZ (col_items.push_back(*item));
+      }
+    } else if (table_item.function_table_expr_->get_result_type().is_ext()) {
       ret = resolve_function_table_column_item_udf(table_item, col_items);
     } else {
       ret = resolve_function_table_column_item_sys_func(table_item, col_items);
@@ -8368,9 +8507,17 @@ int ObDMLResolver::get_columns_from_table_item(const TableItem *table_item, ObIA
       }
     }
   } else if (table_item->is_function_table()) {
-    OZ (ObResolverUtils::get_all_function_table_column_names(*table_item,
-                                                             params_,
-                                                             column_names));
+    if (table_item->file_sql_column_count_ > 0) {
+      for (int64_t i = 0; OB_SUCC(ret) && i < table_item->file_sql_column_count_; ++i) {
+        const ColumnItem *column = get_stmt()->get_column_item(table_item->table_id_, OB_APP_MIN_COLUMN_ID + i);
+        CK (OB_NOT_NULL(column));
+        OZ (column_names.push_back(column->column_name_));
+      }
+    } else {
+      OZ (ObResolverUtils::get_all_function_table_column_names(*table_item,
+                                                               params_,
+                                                               column_names));
+    }
   } else if (table_item->is_basic_table() || table_item->is_fake_cte_table()) {
     /**
      * LINK_TABLE and CTE_TABLE is same as BASIC_TABLE or ALIAS_TABLE

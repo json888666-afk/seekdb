@@ -18,6 +18,7 @@
 #define OCEANBASE_BASIC_OB_FUNCTION_TABLE_OP_H_
 
 #include "sql/engine/ob_operator.h"
+#include "sql/engine/basic/ob_file_sql_csv.h"
 #include "sql/engine/basic/ob_chunk_datum_store.h"
 #include "lib/charset/ob_charset.h"
 
@@ -32,10 +33,13 @@ class ObFunctionTableSpec : public ObOpSpec
 OB_UNIS_VERSION_V(1);
 public:
   ObFunctionTableSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
-    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), has_correlated_expr_(false)
+    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), file_sql_source_columns_(alloc), has_correlated_expr_(false)
   {}
   ObExpr *value_expr_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
+  common::ObFixedArray<int64_t, common::ObIAllocator> file_sql_source_columns_;
+  int64_t file_sql_column_count_ = 0;
+  bool file_sql_csv_header_ = true;
   bool has_correlated_expr_;
 };
 
@@ -58,7 +62,11 @@ public:
   virtual int inner_close() override;
   virtual void destroy() override;
 private:
+  int open_csv();
+  int inner_get_next_csv_row();
   int inner_get_next_row_udf();
+  std::unique_ptr<std::istream> csv_input_;
+  file_sql::CsvRow csv_row_;
   int inner_get_next_row_sys_func();
   int get_current_result(common::ObObj &result);
   int64_t node_idx_;

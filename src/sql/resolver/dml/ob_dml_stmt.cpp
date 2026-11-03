@@ -181,6 +181,8 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   skip_locked_ = other.skip_locked_;
   node_ = other.node_; // should deep copy ? seems to be unnecessary
   snapshot_query_type_ = other.snapshot_query_type_;
+  file_sql_column_count_ = other.file_sql_column_count_;
+  file_sql_csv_header_ = other.file_sql_csv_header_;
   // ddl related
   ddl_schema_version_ = other.ddl_schema_version_;
   ddl_table_id_ = other.ddl_table_id_;

@@ -5509,6 +5509,12 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(generate_rt_expr(*value_raw_expr, value_expr))) {
   } else {
+    const TableItem *item = op.get_stmt()->get_table_item_by_id(op.get_table_id());
+    if (item != nullptr && item->file_sql_column_count_ > 0) {
+      spec.file_sql_column_count_ = item->file_sql_column_count_;
+      spec.file_sql_csv_header_ = item->file_sql_csv_header_;
+      OZ (spec.file_sql_source_columns_.init(op.get_stmt()->get_column_size()));
+    }
     spec.has_correlated_expr_ = value_raw_expr->has_flag(CNT_DYNAMIC_PARAM);
     spec.value_expr_ = value_expr;
     for (int64_t i = 0; OB_SUCC(ret) && i < op.get_output_exprs().count(); ++i) {

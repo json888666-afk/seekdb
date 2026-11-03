@@ -18,6 +18,23 @@
 
 #include "sql/engine/basic/ob_function_table_op.h"
 #include "sql/engine/ob_exec_context.h"
+#include "sql/session/ob_sql_session_info.h"
+#include "share/schema/ob_priv_type.h"
+#include "common/timezone/ob_time_convert.h"
+
+#include <cerrno>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <locale>
+#include <sstream>
+#include <stdexcept>
+#ifdef __linux__
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include "sql/engine/expr/ob_expr_lob_utils.h"
 
 
@@ -27,7 +44,266 @@ using namespace common;
 namespace sql
 {
 
-OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_);
+OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_);
+
+#ifdef __linux__
+namespace {
+
+class FileSqlInputBuffer : public std::streambuf
+{
+public:
+  explicit FileSqlInputBuffer(FILE *file) : file_(file, &std::fclose) {}
+private:
+  int_type underflow() override
+  {
+    if (gptr() != egptr()) {
+      return traits_type::to_int_type(*gptr());
+    }
+    const size_t count = std::fread(buffer_, 1, sizeof(buffer_), file_.get());
+    if (count == 0) {
+      if (std::ferror(file_.get())) {
+        throw std::runtime_error("read_csv file read failed");
+      }
+      return traits_type::eof();
+    }
+    setg(buffer_, buffer_, buffer_ + count);
+    return traits_type::to_int_type(*gptr());
+  }
+
+  std::unique_ptr<FILE, decltype(&std::fclose)> file_;
+  char buffer_[8192];
+};
+
+class FileSqlInputStream : public std::istream
+{
+public:
+  explicit FileSqlInputStream(FILE *file) : std::istream(nullptr), buffer_(file)
+  {
+    rdbuf(&buffer_);
+  }
+private:
+  FileSqlInputBuffer buffer_;
+};
+
+struct FileSqlDescriptor
+{
+  explicit FileSqlDescriptor(int fd) : fd_(fd) {}
+  ~FileSqlDescriptor() { if (fd_ >= 0) { ::close(fd_); } }
+  int fd_;
+};
+
+bool file_is_within(const std::filesystem::path &root, const std::filesystem::path &file)
+{
+  auto it = file.begin();
+  for (const auto &component : root) {
+    if (it == file.end() || *it != component) {
+      return false;
+    }
+    ++it;
+  }
+  return it != file.end();
+}
+
+} // namespace
+#endif
+
+int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
+                             std::unique_ptr<std::istream> &input)
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  input.reset();
+  if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL while enable_file_sql is OFF");
+  } else if (0 == (session.get_user_priv_set() & OB_PRIV_FILE)) {
+    ret = OB_ERR_NO_PRIVILEGE;
+  } else {
+#ifdef __linux__
+    ObString secure_dir;
+    if (OB_FAIL(session.get_secure_file_priv(secure_dir))) {
+    } else if (secure_dir.empty() || 0 == secure_dir.case_compare("NULL")) {
+      ret = OB_ERR_NO_PRIVILEGE;
+    } else if (path.empty()) {
+      ret = OB_INVALID_ARGUMENT;
+    } else {
+      try {
+        const std::string filename(path.ptr(), path.length());
+        const std::string directory(secure_dir.ptr(), secure_dir.length());
+        if (filename.find('\0') != std::string::npos || filename.find("://") != std::string::npos ||
+            directory.find('\0') != std::string::npos) {
+          ret = OB_INVALID_ARGUMENT;
+        } else {
+          namespace fs = std::filesystem;
+          std::error_code ec;
+          const fs::path root = fs::canonical(directory, ec);
+          if (ec || !fs::is_directory(root, ec) || ec) {
+            ret = OB_ERR_NO_PRIVILEGE;
+          } else {
+            // O_PATH pins the object without opening a device/FIFO for I/O.
+            FileSqlDescriptor fd(::open(filename.c_str(), O_PATH | O_CLOEXEC));
+            struct stat st {};
+            if (fd.fd_ < 0 || ::fstat(fd.fd_, &st) != 0 || !S_ISREG(st.st_mode)) {
+              ret = OB_FILE_NOT_EXIST;
+            } else {
+              const std::string proc_path = "/proc/self/fd/" + std::to_string(fd.fd_);
+              const fs::path resolved = fs::canonical(proc_path, ec);
+              if (ec || !file_is_within(root, resolved)) {
+                ret = OB_ERR_NO_PRIVILEGE;
+              } else {
+                std::unique_ptr<FILE, decltype(&std::fclose)> file(
+                    std::fopen(proc_path.c_str(), "rb"), &std::fclose);
+                if (!file) {
+                  ret = OB_FILE_NOT_EXIST;
+                } else {
+                  input = std::make_unique<FileSqlInputStream>(file.get());
+                  file.release();
+                }
+              }
+            }
+          }
+        }
+      } catch (const std::exception &e) {
+        ret = OB_INVALID_ARGUMENT;
+        LOG_WARN("could not open local read_csv file", K(ret), "reason", e.what());
+      }
+    }
+#else
+    UNUSED(path);
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
+#endif
+  }
+  return ret;
+}
+
+int ObFunctionTableOp::open_csv()
+{
+  int ret = OB_SUCCESS;
+  ObDatum *value = nullptr;
+  auto *session = ctx_.get_my_session();
+  csv_input_.reset();
+  csv_row_.clear();
+  if (OB_ISNULL(session) || OB_ISNULL(MY_SPEC.value_expr_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(MY_SPEC.value_expr_->eval(eval_ctx_, value))) {
+  } else if (value->is_null()) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_))) {
+  } else if (MY_SPEC.file_sql_csv_header_) {
+    try {
+      if (!file_sql::CsvReader(*csv_input_).next(csv_row_) ||
+          csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {
+        ret = OB_INVALID_ARGUMENT;
+      }
+    } catch (const std::exception &e) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_WARN("could not read CSV header", K(ret), "reason", e.what());
+    }
+  }
+  if (OB_FAIL(ret)) {
+    csv_input_.reset();
+  }
+  return ret;
+}
+
+int ObFunctionTableOp::inner_get_next_csv_row()
+{
+  int ret = OB_SUCCESS;
+  clear_evaluated_flag();
+  if (!csv_input_ ||
+      MY_SPEC.file_sql_source_columns_.count() != MY_SPEC.column_exprs_.count()) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(ctx_.check_status())) {
+  } else {
+    try {
+      if (!file_sql::CsvReader(*csv_input_).next(csv_row_)) {
+        ret = OB_ITER_END;
+      } else if (csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {
+        ret = OB_INVALID_ARGUMENT;
+      }
+      for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.column_exprs_.count(); ++i) {
+        ObExpr *expr = MY_SPEC.column_exprs_.at(i);
+        const auto index = MY_SPEC.file_sql_source_columns_.at(i);
+        if (index < 0 || index >= MY_SPEC.file_sql_column_count_) {
+          ret = OB_ERR_UNEXPECTED;
+          break;
+        }
+        const auto &cell = csv_row_[index];
+        const ObString text(cell.text.size(), cell.text.data());
+        auto &datum = expr->locate_datum_for_write(eval_ctx_);
+        if (cell.is_null) {
+          datum.set_null();
+        } else {
+          switch (expr->datum_meta_.type_) {
+            case ObIntType: {
+              char *end = nullptr;
+              errno = 0;
+              const auto value = std::strtoll(cell.text.c_str(), &end, 10);
+              if (errno == ERANGE || end == cell.text.c_str() || *end != '\0') {
+                ret = OB_INVALID_ARGUMENT;
+              } else {
+                datum.set_int(value);
+              }
+              break;
+            }
+            case ObDoubleType: {
+              std::istringstream number(cell.text);
+              number.imbue(std::locale::classic());
+              double value = 0;
+              number >> std::noskipws >> value;
+              if (!number || !number.eof() || !std::isfinite(value)) {
+                ret = OB_INVALID_ARGUMENT;
+              } else {
+                datum.set_double(value);
+              }
+              break;
+            }
+            case ObTinyIntType:
+              if (0 == text.case_compare("true")) {
+                datum.set_int(1);
+              } else if (0 == text.case_compare("false")) {
+                datum.set_int(0);
+              } else {
+                ret = OB_INVALID_ARGUMENT;
+              }
+              break;
+            case ObDateType: {
+              int32_t value = 0;
+              if (OB_SUCC(ObTimeConverter::str_to_date(text, value))) {
+                datum.set_date(value);
+              } else {
+                ret = OB_INVALID_ARGUMENT;
+              }
+              break;
+            }
+            case ObDateTimeType: {
+              int64_t value = 0;
+              if (OB_SUCC(ObTimeConverter::str_to_datetime(text, ObTimeConvertCtx(nullptr, false), value))) {
+                datum.set_datetime(value);
+              } else {
+                ret = OB_INVALID_ARGUMENT;
+              }
+              break;
+            }
+            default:
+              datum.set_string(text);
+              break;
+          }
+        }
+        if (OB_SUCC(ret)) {
+          expr->set_evaluated_projected(eval_ctx_);
+        }
+      }
+    } catch (const std::exception &e) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_WARN("could not read CSV row", K(ret), "reason", e.what());
+    }
+  }
+  return ret;
+}
 
 int ObFunctionTableOp::inner_open()
 {
@@ -36,6 +312,9 @@ int ObFunctionTableOp::inner_open()
   already_calc_ = false;
   if (OB_ISNULL(MY_SPEC.value_expr_)) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (MY_SPEC.file_sql_column_count_ > 0) {
+    next_row_func_ = &ObFunctionTableOp::inner_get_next_csv_row;
+    ret = open_csv();
   } else if (ObExtendType == MY_SPEC.value_expr_->datum_meta_.type_) {
     next_row_func_ = &ObFunctionTableOp::inner_get_next_row_udf;
   } else {
@@ -48,6 +327,8 @@ int ObFunctionTableOp::inner_rescan()
 {
   int ret = OB_SUCCESS;
   if (OB_FAIL(ObOperator::inner_rescan())) {
+  } else if (MY_SPEC.file_sql_column_count_ > 0) {
+    ret = open_csv();
   } else {
     node_idx_ = 0;
     if (MY_SPEC.has_correlated_expr_) {
@@ -63,6 +344,8 @@ int ObFunctionTableOp::inner_rescan()
 int ObFunctionTableOp::inner_close()
 {
   int ret = OB_SUCCESS;
+  csv_input_.reset();
+  file_sql::CsvRow().swap(csv_row_);
   node_idx_ = 0;
   row_count_ = 0;
   col_count_ = 0;
@@ -72,6 +355,8 @@ int ObFunctionTableOp::inner_close()
 
 void ObFunctionTableOp::destroy()
 {
+  csv_input_.reset();
+  file_sql::CsvRow().swap(csv_row_);
   ObOperator::destroy();
 }
 

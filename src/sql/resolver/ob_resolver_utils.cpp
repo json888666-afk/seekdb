@@ -195,6 +195,10 @@ int ObResolverUtils::check_function_table_column_exist(const TableItem &table_it
                                                        const ObString &column_name)
 {
   int ret = OB_SUCCESS;
+  if (table_item.file_sql_column_count_ > 0) {
+    // The resolver registers all inferred columns before resolving references.
+    return OB_ERR_BAD_FIELD_ERROR;
+  }
   ObSEArray<ObString, 16> column_names;
   bool exist = false;
   OZ (get_all_function_table_column_names(table_item, params, column_names));
