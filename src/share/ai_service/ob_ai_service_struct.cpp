@@ -172,9 +172,6 @@ int ObAiModelEndpointInfo::merge_delta_endpoint(common::ObArenaAllocator &alloca
   }
 
   if (OB_SUCC(ret)) {
-    if (provider_.case_compare("OLLAMA") == 0) {
-      provider_ = ObString::make_string("OLLAMA");
-    }
     if (has_api_key && !access_key_.empty() && OB_FAIL(encrypt_access_key_(allocator, access_key_, access_key_))) {
       LOG_WARN("failed to encrypt access key", K(ret));
     } else if (OB_FAIL(check_valid())) {
