@@ -2131,6 +2131,20 @@ int ObDMLService::get_nested_delete_ctx(const uint64_t table_id,
 
 namespace {
 
+int append_ai_identifier(ObSqlString &sql, const ObString &name)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append("`"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < name.length(); ++i) {
+    if (name[i] == '`') {
+      OZ (sql.append("`"));
+    }
+    OZ (sql.append(name.ptr() + i, 1));
+  }
+  OZ (sql.append("`"));
+  return ret;
+}
+
 int build_ai_rowkey_predicate(const schema::ObTableSchema &table,
                               const ObIArray<ObObj> &cells,
                               const ObObjPrintParams &print_params,
@@ -2145,22 +2159,31 @@ int build_ai_rowkey_predicate(const schema::ObTableSchema &table,
     OX (column = table.get_column_schema(column_id));
     CK (OB_NOT_NULL(column));
     if (OB_SUCC(ret)) {
-      const ObString &name = column->get_column_name_str();
-      OZ (predicate.append(i == 0 ? "`" : " AND `"));
-      for (int64_t j = 0; OB_SUCC(ret) && j < name.length(); ++j) {
-        if (name[j] == '`') {
-          OZ (predicate.append("`"));
-        }
-        OZ (predicate.append(name.ptr() + j, 1));
+      const ObObj &value = cells.at(i);
+      if (i > 0) {
+        OZ (predicate.append(" AND "));
       }
-      OZ (predicate.append("` = "));
-      int64_t length = 128;
-      int64_t pos = 0;
-      char *literal = static_cast<char *>(allocator.alloc(length));
-      CK (OB_NOT_NULL(literal));
-      OZ (cells.at(i).print_sql_literal(literal, length, pos, allocator,
-                                      print_params));
-      OZ (predicate.append(literal, pos));
+      OZ (append_ai_identifier(predicate, column->get_column_name_str()));
+      OZ (predicate.append(" = "));
+      if (value.is_string_type()) {
+        // This predicate is replayed in a different session by the worker.
+        // Hex bytes avoid dependence on that session's string escape mode.
+        const ObCollationType collation = value.get_collation_type();
+        if (collation != CS_TYPE_BINARY) {
+          OZ (predicate.append_fmt("_%s ", ObCharset::charset_name(collation)));
+        }
+        OZ (sql_append_hex_escape_str(value.get_string(), predicate));
+        if (collation != CS_TYPE_BINARY) {
+          OZ (predicate.append_fmt(" COLLATE %s", ObCharset::collation_name(collation)));
+        }
+      } else {
+        int64_t length = 128;
+        int64_t pos = 0;
+        char *literal = static_cast<char *>(allocator.alloc(length));
+        CK (OB_NOT_NULL(literal));
+        OZ (value.print_sql_literal(literal, length, pos, allocator, print_params));
+        OZ (predicate.append(literal, pos));
+      }
     }
   }
   return ret;
@@ -2202,20 +2225,6 @@ int collect_ai_rowkey(ObTableModifyOp &op,
       OZ (key_cells.push_back(key_cell));
     }
   }
-  return ret;
-}
-
-int append_ai_identifier(ObSqlString &sql, const ObString &name)
-{
-  int ret = OB_SUCCESS;
-  OZ (sql.append("`"));
-  for (int64_t i = 0; OB_SUCC(ret) && i < name.length(); ++i) {
-    if (name[i] == '`') {
-      OZ (sql.append("`"));
-    }
-    OZ (sql.append(name.ptr() + i, 1));
-  }
-  OZ (sql.append("`"));
   return ret;
 }
 
