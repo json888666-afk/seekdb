@@ -2367,20 +2367,14 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
                                   allocator, predicate));
     OZ (ObExprUuid::gen_server_uuid(request, UuidCommon::LENGTH_UUID));
     OZ (insert_sql.append_fmt("INSERT INTO oceanbase.%s "
-        "(table_id, request_id, column_id, row_key, rowkey_predicate, definition_version, eligible_ts) VALUES ",
-        OB_ALL_AI_COLUMN_TASK_TNAME));
-    for (int64_t i = 0; OB_SUCC(ret) && i < columns.count(); ++i) {
-      const auto &column = *columns.at(i);
-      const int64_t version = column.get_schema_version() > 0 ?
-                              column.get_schema_version() : table->get_schema_version();
-      OZ (insert_sql.append_fmt(i == 0 ? "(%llu,'%s',%llu," : ",(%llu,'%s',%llu,",
-          static_cast<unsigned long long>(das.index_tid_), request,
-          static_cast<unsigned long long>(column.get_column_id())));
-      OZ (sql_append_hex_escape_str(encoded, insert_sql));
-      OZ (insert_sql.append(","));
-      OZ (sql_append_hex_escape_str(predicate.string(), insert_sql));
-      OZ (insert_sql.append_fmt(",%lld,NOW(6))", static_cast<long long>(version)));
-    }
+        "(table_id, request_id, column_id, row_key, rowkey_predicate, definition_version, eligible_ts) "
+        "SELECT table_id, '%s', column_id, ", OB_ALL_AI_COLUMN_TASK_TNAME, request));
+    OZ (sql_append_hex_escape_str(encoded, insert_sql));
+    OZ (insert_sql.append(", "));
+    OZ (sql_append_hex_escape_str(predicate.string(), insert_sql));
+    OZ (insert_sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s "
+        "WHERE table_id=%llu AND column_id IN (%s)",
+        OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.index_tid_), ids.ptr()));
 
     if (OB_SUCC(ret) && updating) {
       const schema::ObDatabaseSchema *db = nullptr;
