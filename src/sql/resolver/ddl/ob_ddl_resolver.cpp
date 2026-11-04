@@ -1765,6 +1765,42 @@ int ObDDLResolver::resolve_column_name(ObColumnSchemaV2 &column,
 
 namespace {
 
+int check_ai_column_input(const ParseNode &expr)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<const ParseNode *, 16> pending;
+  OZ (pending.push_back(&expr));
+  for (int64_t i = 0; OB_SUCC(ret) && i < pending.count(); ++i) {
+    const ParseNode &node = *pending.at(i);
+    if (node.type_ == T_SELECT || node.type_ == T_REF_QUERY || node.type_ == T_QUESTIONMARK ||
+        node.type_ == T_SYSTEM_VARIABLE || node.type_ == T_USER_VARIABLE_IDENTIFIER ||
+        node.type_ == T_OP_GET_USER_VAR) {
+      ret = OB_NOT_SUPPORTED;
+    } else if (node.type_ == T_COLUMN_REF) {
+      if (node.num_child_ != 3 || node.children_[0] != nullptr || node.children_[1] != nullptr ||
+          node.children_[2] == nullptr) {
+        ret = OB_NOT_SUPPORTED;
+      }
+    } else if (node.type_ == T_FUN_SYS && node.num_child_ == 2 && node.children_[0] != nullptr) {
+      const auto *name = node.children_[0];
+      const ObString function(name->str_len_, name->str_value_);
+      if (0 == function.case_compare("AI_COMPLETE") || 0 == function.case_compare("AI_EMBED") ||
+          0 == function.case_compare("AI_RERANK")) {
+        ret = OB_NOT_SUPPORTED;
+      }
+    }
+    for (int64_t child = 0; OB_SUCC(ret) && child < node.num_child_; ++child) {
+      if (node.children_[child] != nullptr) {
+        OZ (pending.push_back(node.children_[child]));
+      }
+    }
+  }
+  if (ret == OB_NOT_SUPPORTED) {
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN input must use row-local expressions without nested model calls");
+  }
+  return ret;
+}
+
 int validate_ai_column_definition(const ParseNode &node, const ObColumnSchemaV2 &column)
 {
   int ret = OB_SUCCESS;
@@ -1789,6 +1825,12 @@ int validate_ai_column_definition(const ParseNode &node, const ObColumnSchemaV2 
         args->children_[0]->type_ != T_VARCHAR || args->children_[0]->str_len_ == 0) {
       ret = OB_INVALID_ARGUMENT;
       LOG_USER_ERROR(OB_INVALID_ARGUMENT, "AI COLUMN model and arguments");
+    } else if (args->children_[1] == nullptr) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "AI COLUMN input");
+    } else if (OB_FAIL(check_ai_column_input(*args->children_[1]))) {
+    } else if (rule.function == share::AiColumnFunction::COMPLETE && args->num_child_ == 3 &&
+               args->children_[2] != nullptr && OB_FAIL(check_ai_column_input(*args->children_[2]))) {
     }
     if (expr->str_value_ != nullptr) {
       rule.normalized_expression = std::string_view(expr->str_value_, expr->str_len_);
