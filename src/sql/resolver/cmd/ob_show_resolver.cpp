@@ -399,7 +399,8 @@ int ObShowResolver::resolve(const ParseNode &parse_tree)
               if (parse_tree.children_[0]->value_ == 4) {
                 GEN_SQL_STEP_1(ObShowSqlSet::SHOW_AI_COLUMNS);
                 GEN_SQL_STEP_2(ObShowSqlSet::SHOW_AI_COLUMNS, OB_SYS_DATABASE_NAME,
-                               OB_ALL_AI_COLUMN_TNAME, show_table_id);
+                               OB_ALL_AI_COLUMN_TNAME, OB_SYS_DATABASE_NAME,
+                               OB_ALL_COLUMN_TNAME, show_table_id);
               } else if (OB_UNLIKELY(((parse_tree.children_[0]->value_)>>2) != 0)) {
                 ret = OB_ERR_UNEXPECTED;
               } else if (is_full) {
@@ -2390,10 +2391,12 @@ DEFINE_SHOW_CLAUSE_SET(SHOW_FULL_COLUMNS,
                        "Field");
 DEFINE_SHOW_CLAUSE_SET(SHOW_AI_COLUMNS,
                        NULL,
-                       "SELECT column_name AS `Field`, "
-                       "JSON_UNQUOTE(JSON_EXTRACT(normalized_expr, '$.expression')) AS `Expression`, "
-                       "'async' AS `Sync_mode`, max_retries AS `Max_retries` "
-                       "FROM %s.%s WHERE table_id = %ld ORDER BY column_id",
+                       "SELECT c.column_name AS `Field`, "
+                       "JSON_UNQUOTE(JSON_EXTRACT(a.normalized_expr, '$.expression')) AS `Expression`, "
+                       "'async' AS `Sync_mode`, a.max_retries AS `Max_retries` "
+                       "FROM %s.%s a JOIN %s.%s c "
+                       "ON a.table_id = c.table_id AND a.column_id = c.column_id "
+                       "WHERE a.table_id = %ld ORDER BY a.column_id",
                        NULL,
                        "Field");
 DEFINE_SHOW_CLAUSE_SET(SHOW_EXTENDED_COLUMNS,
