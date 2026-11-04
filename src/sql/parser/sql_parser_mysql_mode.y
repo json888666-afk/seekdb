@@ -4853,7 +4853,8 @@ column_definition_ref data_type opt_column_attribute_list opt_column_reference o
 }
 | column_definition_ref data_type AI COLUMN '(' expr ')' opt_ai_column_options opt_position_column
 {
-  set_data_type_collation($2, NULL, false, true);
+  ParseNode *attributes = NULL;
+  set_data_type_collation($2, attributes, false, true);
   dup_expr_string($6, result, @6.first_column, @6.last_column);
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_DEFINITION, 6, $1, $2, NULL, $9, $6, $8);
 }
