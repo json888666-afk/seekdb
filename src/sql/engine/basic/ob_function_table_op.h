@@ -45,6 +45,7 @@ public:
   bool file_sql_glob_ = false;
   bool file_sql_parquet_ = false;
   common::ObString file_sql_snapshot_;
+  common::ObString file_sql_csv_options_;
   bool has_correlated_expr_;
 };
 
@@ -72,6 +73,7 @@ private:
   int inner_get_next_row_udf();
   std::unique_ptr<std::istream> csv_input_;
   file_sql::CsvRow csv_row_;
+  file_sql::CsvOptions csv_options_;
   file_sql::JsonRow json_row_;
   int inner_get_next_row_sys_func();
   int get_current_result(common::ObObj &result);

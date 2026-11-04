@@ -147,7 +147,8 @@ bool CsvReader::next(CsvRow &row)
     if (row.size() == MAX_FILE_SQL_COLUMNS) {
       throw std::length_error("CSV row has too many columns");
     }
-    const bool is_null = state == FieldState::START;
+    const bool is_null = state == FieldState::START ||
+                         (state == FieldState::UNQUOTED && field == options_.null_text);
     row.push_back({std::move(field), is_null});
     field.clear();
     state = FieldState::START;
@@ -173,26 +174,32 @@ bool CsvReader::next(CsvRow &row)
     }
 
     if (state == FieldState::QUOTED) {
-      if (c == '"') {
+      if (options_.escape != options_.quote && c == options_.escape) {
+        const int escaped = input_.get();
+        if ((escaped != options_.quote && escaped != options_.escape) || ++row_bytes > MAX_FILE_SQL_ROW_BYTES) {
+          throw std::invalid_argument("invalid CSV escape sequence");
+        }
+        field.push_back(static_cast<char>(escaped));
+      } else if (c == options_.quote) {
         state = FieldState::AFTER_QUOTE;
       } else {
         field.push_back(static_cast<char>(c));
       }
-    } else if (c == ',' || c == '\n' || c == '\r') {
+    } else if (c == options_.delimiter || c == '\n' || c == '\r') {
       finish_field();
-      if (c != ',') {
+      if (c != options_.delimiter) {
         if (c == '\r' && input_.peek() == '\n') {
           input_.get();
         }
         return true;
       }
     } else if (state == FieldState::AFTER_QUOTE) {
-      if (c != '"') {
+      if (c != options_.quote || options_.escape != options_.quote) {
         throw std::invalid_argument("unexpected data after CSV closing quote");
       }
-      field.push_back('"');
+      field.push_back(options_.quote);
       state = FieldState::QUOTED;
-    } else if (c == '"') {
+    } else if (c == options_.quote) {
       if (state != FieldState::START) {
         throw std::invalid_argument("unexpected quote in unquoted CSV field");
       }
@@ -204,9 +211,9 @@ bool CsvReader::next(CsvRow &row)
   }
 }
 
-std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header)
+std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header, const CsvOptions &options)
 {
-  CsvReader reader(input);
+  CsvReader reader(input, options);
   CsvRow row;
   std::vector<CsvColumn> columns;
   if (!reader.next(row)) {

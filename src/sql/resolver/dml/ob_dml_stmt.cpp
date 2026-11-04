@@ -187,6 +187,7 @@ int TableItem::deep_copy(ObIRawExprCopier &expr_copier,
   file_sql_glob_ = other.file_sql_glob_;
   file_sql_parquet_ = other.file_sql_parquet_;
   file_sql_snapshot_ = other.file_sql_snapshot_;
+  file_sql_csv_options_ = other.file_sql_csv_options_;
   // ddl related
   ddl_schema_version_ = other.ddl_schema_version_;
   ddl_table_id_ = other.ddl_table_id_;

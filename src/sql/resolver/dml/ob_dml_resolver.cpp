@@ -3944,6 +3944,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
   ObString path;
   std::unique_ptr<std::istream> stream;
   std::string snapshot;
+  file_sql::CsvOptions csv_options;
   std::vector<file_sql::CsvColumn> columns;
   CK (OB_NOT_NULL(stmt), OB_NOT_NULL(allocator_), OB_NOT_NULL(session_info_), OB_NOT_NULL(params_.expr_factory_));
   CK (3 == node.num_child_);
@@ -3973,6 +3974,10 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       bool seen_header = false;
       bool seen_sample = false;
       bool seen_format = false;
+      bool seen_delimiter = false;
+      bool seen_quote = false;
+      bool seen_escape = false;
+      bool seen_null = false;
       for (int64_t i = 1; OB_SUCC(ret) && i < args->num_child_; ++i) {
         const ParseNode *opt = args->children_[i];
         if (OB_ISNULL(opt) || T_OP_EQ != opt->type_ || opt->num_child_ != 2 ||
@@ -3991,6 +3996,24 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
           if (!json_lines && !seen_header && 0 == key.case_compare("header") && T_BOOL == val->type_) {
             header = (val->value_ != 0);
             seen_header = true;
+          } else if (!json_lines && T_VARCHAR == val->type_ && key.case_compare("nullstr") == 0 && !seen_null) {
+            csv_options.null_text.assign(val->str_value_, val->str_len_);
+            seen_null = true;
+          } else if (!json_lines && T_VARCHAR == val->type_ && val->str_len_ == 1 &&
+                     val->str_value_[0] != '\0' && val->str_value_[0] != '\r' && val->str_value_[0] != '\n' &&
+                     key.case_compare("delimiter") == 0 && !seen_delimiter) {
+            csv_options.delimiter = val->str_value_[0];
+            seen_delimiter = true;
+          } else if (!json_lines && T_VARCHAR == val->type_ && val->str_len_ == 1 &&
+                     val->str_value_[0] != '\0' && val->str_value_[0] != '\r' && val->str_value_[0] != '\n' &&
+                     key.case_compare("quote") == 0 && !seen_quote) {
+            csv_options.quote = val->str_value_[0];
+            seen_quote = true;
+          } else if (!json_lines && T_VARCHAR == val->type_ && val->str_len_ == 1 &&
+                     val->str_value_[0] != '\0' && val->str_value_[0] != '\r' && val->str_value_[0] != '\n' &&
+                     key.case_compare("escape") == 0 && !seen_escape) {
+            csv_options.escape = val->str_value_[0];
+            seen_escape = true;
           } else if (json_lines && !seen_format && 0 == key.case_compare("format") &&
                      T_VARCHAR == val->type_ &&
                      0 == ObString(val->str_len_, val->str_value_).case_compare("newline_delimited")) {
@@ -4006,6 +4029,13 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
             LOG_USER_ERROR(OB_NOT_SUPPORTED, "this read_csv option");
           }
         }
+      }
+      if (!seen_escape) {
+        csv_options.escape = csv_options.quote;
+      }
+      if (OB_SUCC(ret) && (csv_options.delimiter == csv_options.quote ||
+                          csv_options.delimiter == csv_options.escape)) {
+        ret = OB_INVALID_ARGUMENT;
       }
     }
   }
@@ -4023,7 +4053,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
   }
   if (OB_SUCC(ret) && !glob && !parquet) {
     try {
-      columns = json_lines ? file_sql::infer_json_lines_schema(*stream) : file_sql::infer_csv_schema(*stream, header);
+      columns = json_lines ? file_sql::infer_json_lines_schema(*stream) : file_sql::infer_csv_schema(*stream, header, csv_options);
       if (columns.empty()) {
         ret = OB_INVALID_ARGUMENT;
       }
@@ -4061,6 +4091,11 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       item->file_sql_json_lines_ = json_lines;
       item->file_sql_glob_ = glob;
       item->file_sql_parquet_ = parquet;
+      if (!glob && !parquet && !json_lines) {
+        const std::string options = std::string{csv_options.delimiter, csv_options.quote, csv_options.escape} +
+                                    csv_options.null_text;
+        OZ (ob_write_string(*allocator_, ObString(options.size(), options.data()), item->file_sql_csv_options_));
+      }
       if (!snapshot.empty()) {
         OZ (ob_write_string(*allocator_, ObString(snapshot.size(), snapshot.data()), item->file_sql_snapshot_));
       }

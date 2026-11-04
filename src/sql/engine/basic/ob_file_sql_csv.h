@@ -59,20 +59,30 @@ struct CsvColumn
 // A reader owns no file or rows. Its caller supplies an already-authorized
 // input stream and can scan twice (infer, then execute) without materializing
 // the entire file.
+struct CsvOptions
+{
+  char delimiter = ',';
+  char quote = '"';
+  char escape = '"';
+  std::string null_text;
+};
+
 class CsvReader
 {
 public:
-  explicit CsvReader(std::istream &input) : input_(input) {}
+  explicit CsvReader(std::istream &input, const CsvOptions &options = CsvOptions())
+    : input_(input), options_(options) {}
   // Returns false at EOF; throws on malformed quoting or a read failure.
   bool next(CsvRow &row);
 
 private:
   std::istream &input_;
+  CsvOptions options_;
 };
 
 // Returns the schema in file order. A headerless scan uses column0, column1,
 // etc. Unquoted empty fields are NULL; quoted empty fields are empty strings.
-std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header);
+std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header, const CsvOptions &options = CsvOptions());
 
 using JsonRow = std::vector<std::pair<CsvColumn, CsvCell>>;
 bool read_json_line(std::istream &input, JsonRow &row);

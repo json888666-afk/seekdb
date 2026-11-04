@@ -3155,6 +3155,9 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
               }
             }
             if (OB_SUCC(ret)) {
+              if (!seen_escape) {
+                into_item->escaped_cht_ = into_item->closed_cht_;
+              }
               const char delimiter = into_item->field_str_.get_string()[0];
               const char quote = into_item->closed_cht_.get_string()[0];
               const char escape = into_item->escaped_cht_.get_string()[0];

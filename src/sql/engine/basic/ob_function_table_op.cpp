@@ -46,7 +46,7 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_, file_sql_parquet_, file_sql_snapshot_);
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_, file_sql_parquet_, file_sql_snapshot_, file_sql_csv_options_);
 
 #ifdef __linux__
 namespace {
@@ -394,6 +394,13 @@ int ObFunctionTableOp::open_csv()
   auto *session = ctx_.get_my_session();
   csv_input_.reset();
   csv_row_.clear();
+  const auto &options = MY_SPEC.file_sql_csv_options_;
+  if (options.length() >= 3) {
+    csv_options_.delimiter = options[0];
+    csv_options_.quote = options[1];
+    csv_options_.escape = options[2];
+    csv_options_.null_text.assign(options.ptr() + 3, options.length() - 3);
+  }
   if (OB_ISNULL(session) || OB_ISNULL(MY_SPEC.value_expr_)) {
     ret = OB_ERR_UNEXPECTED;
   } else if (OB_FAIL(MY_SPEC.value_expr_->eval(eval_ctx_, value))) {
@@ -408,7 +415,7 @@ int ObFunctionTableOp::open_csv()
                                                 &MY_SPEC.file_sql_snapshot_))) {
   } else if (MY_SPEC.file_sql_csv_header_) {
     try {
-      if (!file_sql::CsvReader(*csv_input_).next(csv_row_) ||
+      if (!file_sql::CsvReader(*csv_input_, csv_options_).next(csv_row_) ||
           csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {
         ret = OB_INVALID_ARGUMENT;
       }
@@ -435,7 +442,7 @@ int ObFunctionTableOp::inner_get_next_csv_row()
     try {
       const bool json_lines = MY_SPEC.file_sql_json_lines_;
       const bool has_row = json_lines ? file_sql::read_json_line(*csv_input_, json_row_) :
-                                       file_sql::CsvReader(*csv_input_).next(csv_row_);
+                                       file_sql::CsvReader(*csv_input_, csv_options_).next(csv_row_);
       if (!has_row) {
         ret = OB_ITER_END;
       } else if (!json_lines && csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {

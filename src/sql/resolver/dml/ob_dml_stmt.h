@@ -299,6 +299,7 @@ struct TableItem
   bool file_sql_glob_ = false;
   bool file_sql_parquet_ = false;
   common::ObString file_sql_snapshot_;
+  common::ObString file_sql_csv_options_;
   int64_t ddl_schema_version_;
   int64_t ddl_table_id_;
   // table partition
