@@ -2018,9 +2018,9 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
   }
   if (OB_SUCC(ret) && AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
     if (OB_FAIL(validate_ai_column_definition(*node, column))) {
-    } else {
+    } else if (stmt::T_CREATE_TABLE != stmt_->get_stmt_type() || is_create_table_as) {
       ret = OB_NOT_SUPPORTED;
-      LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN persistence");
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN in this DDL form");
     }
   }
   if (OB_SUCC(ret) && GEN_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {

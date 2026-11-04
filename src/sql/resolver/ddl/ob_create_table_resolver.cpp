@@ -896,6 +896,80 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
       }
     }
 
+    for (int32_t i = 0; OB_SUCC(ret) && i < node->num_child_; ++i) {
+      const ParseNode *element = node->children_[i];
+      if (element == nullptr || element->type_ != T_COLUMN_DEFINITION ||
+          element->num_child_ != AI_COLUMN_DEFINITION_NUM_CHILD) {
+        continue;
+      }
+      const ParseNode *name = element->children_[0]->children_[2];
+      auto *result = table_schema.get_column_schema(ObString(name->str_len_, name->str_value_));
+      if (OB_ISNULL(result) || result->get_ai_column_expression().empty()) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        ObSEArray<const ParseNode *, 16> pending;
+        ObSEArray<uint64_t, 8> dependencies;
+        OZ (pending.push_back(element->children_[4]));
+        for (int64_t idx = 0; OB_SUCC(ret) && idx < pending.count(); ++idx) {
+          const ParseNode &expr = *pending.at(idx);
+          if (expr.type_ == T_COLUMN_REF) {
+            const ParseNode *dependency_name = expr.children_[2];
+            const auto *dependency = table_schema.get_column_schema(
+                ObString(dependency_name->str_len_, dependency_name->str_value_));
+            if (dependency == nullptr) {
+              ret = OB_ERR_BAD_FIELD_ERROR;
+              LOG_USER_ERROR(OB_ERR_BAD_FIELD_ERROR, dependency_name->str_len_, dependency_name->str_value_,
+                             static_cast<int>(sizeof("AI COLUMN") - 1), "AI COLUMN");
+            } else if (!dependency->get_ai_column_expression().empty() || dependency->is_hidden()) {
+              ret = OB_NOT_SUPPORTED;
+              LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN dependency on an AI or hidden column");
+            } else {
+              bool present = false;
+              for (int64_t d = 0; !present && d < dependencies.count(); ++d) {
+                present = dependencies.at(d) == dependency->get_column_id();
+              }
+              if (!present) {
+                OZ (dependencies.push_back(dependency->get_column_id()));
+              }
+            }
+          } else {
+            for (int64_t c = 0; OB_SUCC(ret) && c < expr.num_child_; ++c) {
+              if (expr.children_[c] != nullptr) {
+                OZ (pending.push_back(expr.children_[c]));
+              }
+            }
+          }
+        }
+        ObSqlString ids;
+        OZ (ids.append("["));
+        for (int64_t d = 0; OB_SUCC(ret) && d < dependencies.count(); ++d) {
+          OZ (ids.append_fmt(d == 0 ? "%llu" : ",%llu", static_cast<unsigned long long>(dependencies.at(d))));
+        }
+        OZ (ids.append("]"));
+        OZ (result->set_ai_column_dependencies(ids.string()));
+        const uint64_t result_id = result->get_column_id();
+        for (int64_t slot = 0; OB_SUCC(ret) && slot < 3; ++slot) {
+          ObColumnSchemaV2 companion;
+          char column_name[64];
+          OZ (ObColumnSchemaV2::ai_column_companion_name(column_name, sizeof(column_name), result_id, slot));
+          if (OB_SUCC(ret) && table_schema.get_column_schema(ObString::make_string(column_name)) != nullptr) {
+            ret = OB_ERR_COLUMN_DUPLICATE;
+          }
+          OX (companion.set_column_id(gen_column_id()));
+          OX (companion.set_is_hidden(true));
+          OX (companion.set_nullable(true));
+          OX (companion.set_data_type(slot == 0 ? ObIntType : ObVarcharType));
+          OX (companion.set_charset_type(slot == 0 ? CHARSET_BINARY : CHARSET_UTF8MB4));
+          OX (companion.set_collation_type(slot == 0 ? CS_TYPE_BINARY : CS_TYPE_UTF8MB4_BIN));
+          if (slot != 0) {
+            OX (companion.set_data_length(slot == 1 ? 64 : 2048));
+          }
+          OZ (companion.set_column_name(column_name));
+          OZ (table_schema.add_column(companion));
+        }
+      }
+    }
+
     // A table must have at least one column as a visible column
     if (OB_SUCC(ret)) {
       // RESOLVE_NON_COL == resolve_rule when, only parse non-column definitions

@@ -46,6 +46,13 @@ ObColumnSchemaV2::~ObColumnSchemaV2()
 {
 }
 
+int ObColumnSchemaV2::ai_column_companion_name(char *buffer, int64_t length, uint64_t result_id, int64_t slot)
+{
+  const int written = snprintf(buffer, length, "__seekdb_ai_%llu_%lld",
+                               static_cast<unsigned long long>(result_id), static_cast<long long>(slot));
+  return written < 0 || written >= length ? OB_SIZE_OVERFLOW : OB_SUCCESS;
+}
+
 int ObColumnSchemaV2::set_ai_column_rule(const ObString &expression, int64_t max_retries)
 {
   int ret = OB_SUCCESS;
@@ -95,6 +102,7 @@ int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
     } else if (OB_FAIL(deep_copy_str(src_schema.column_name_, column_name_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.comment_, comment_))) {
     } else if (OB_FAIL(set_ai_column_rule(src_schema.ai_column_expression_, src_schema.ai_column_max_retries_))) {
+    } else if (OB_FAIL(set_ai_column_dependencies(src_schema.ai_column_dependencies_))) {
     } else if (OB_FAIL(set_extended_type_info(src_schema.extended_type_info_))) {
     } else if (src_schema.column_ref_idxs_ != NULL) {
       if (OB_FAIL(alloc_column_ref_set())) {
@@ -133,7 +141,7 @@ int64_t ObColumnSchemaV2::get_convert_size() const
   convert_size += cur_default_value_.get_deep_copy_size();
   convert_size += column_name_.length() + 1;
   convert_size += comment_.length() + 1;
-  convert_size += ai_column_expression_.length() + 1;
+  convert_size += ai_column_expression_.length() + ai_column_dependencies_.length() + 2;
   if (column_ref_idxs_ != NULL) {
     convert_size += sizeof(ColumnReferenceSet);
   }
@@ -191,6 +199,7 @@ void ObColumnSchemaV2::reset()
   column_name_.reset();
   comment_.reset();
   ai_column_expression_.reset();
+  ai_column_dependencies_.reset();
   ai_column_max_retries_ = 0;
   column_flags_ = NON_CASCADE_FLAG;
   column_ref_idxs_ = NULL;
@@ -253,7 +262,7 @@ OB_DEF_SERIALIZE(ObColumnSchemaV2)
                 lob_chunk_size_,
                 local_session_vars_);
     if (!ai_column_expression_.empty()) {
-      LST_DO_CODE(OB_UNIS_ENCODE, ai_column_expression_, ai_column_max_retries_);
+      LST_DO_CODE(OB_UNIS_ENCODE, ai_column_expression_, ai_column_max_retries_, ai_column_dependencies_);
     }
   }
 
@@ -317,10 +326,12 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 local_session_vars_);
     if (OB_SUCC(ret) && pos < data_len) {
       ObString ai_expression;
+      ObString ai_dependencies;
       int64_t max_retries = 0;
-      LST_DO_CODE(OB_UNIS_DECODE, ai_expression, max_retries);
+      LST_DO_CODE(OB_UNIS_DECODE, ai_expression, max_retries, ai_dependencies);
       if (OB_FAIL(ret)) {
       } else if (OB_FAIL(set_ai_column_rule(ai_expression, max_retries))) {
+      } else if (OB_FAIL(set_ai_column_dependencies(ai_dependencies))) {
       }
     }
   }
@@ -369,7 +380,7 @@ OB_DEF_SERIALIZE_SIZE(ObColumnSchemaV2)
               lob_chunk_size_,
               local_session_vars_);
   if (!ai_column_expression_.empty()) {
-    LST_DO_CODE(OB_UNIS_ADD_LEN, ai_column_expression_, ai_column_max_retries_);
+    LST_DO_CODE(OB_UNIS_ADD_LEN, ai_column_expression_, ai_column_max_retries_, ai_column_dependencies_);
   }
   return len;
 }

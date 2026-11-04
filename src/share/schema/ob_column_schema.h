@@ -142,6 +142,9 @@ int assign(const ObColumnSchemaV2 &src_schema);
   int set_ai_column_rule(const common::ObString &expression, int64_t max_retries);
   const common::ObString &get_ai_column_expression() const { return ai_column_expression_; }
   int64_t get_ai_column_max_retries() const { return ai_column_max_retries_; }
+  const common::ObString &get_ai_column_dependencies() const { return ai_column_dependencies_; }
+  int set_ai_column_dependencies(const common::ObString &ids) { return deep_copy_str(ids, ai_column_dependencies_); }
+  static int ai_column_companion_name(char *buffer, int64_t length, uint64_t result_id, int64_t slot);
   inline int set_comment(const char *comment) { return deep_copy_str(comment, comment_); }
   inline int set_comment(const common::ObString &comment) { return deep_copy_str(comment, comment_); }
   inline void set_on_update_current_timestamp(const bool is_on_update_for_timestamp) { on_update_current_timestamp_ = is_on_update_for_timestamp; }
@@ -384,6 +387,7 @@ private:
   common::ObString column_name_;
   common::ObString comment_;
   common::ObString ai_column_expression_;
+  common::ObString ai_column_dependencies_;
   int64_t ai_column_max_retries_ = 0;
   common::ObArrayHelper<common::ObString> extended_type_info_;//used for enum and set
   uint64_t prev_column_id_;
