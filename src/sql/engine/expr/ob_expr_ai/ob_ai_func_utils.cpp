@@ -279,9 +279,7 @@ int ObOpenAIUtils::ObOpenAIEmbed::parse_output(common::ObIAllocator &allocator,
 int ObOllamaUtils::get_header(common::ObIAllocator &allocator,
                               common::ObArray<ObString> &headers) 
 {
-  int ret = OB_SUCCESS;
-  // ollama header is empty, do nothing
-  return ret;
+  return headers.push_back(ObString("Content-Type: application/json"));
 }
 
 int ObOllamaUtils::ObOllamaComplete::get_header(common::ObIAllocator &allocator,
