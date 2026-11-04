@@ -1,0 +1,36 @@
+select tokenize('lowercase,UPPERCASE 123 lowerCASE', 'beng') as tokens;
+tokens
+["123", "lowercase", "uppercase"]
+select tokenize(concat('word', char(9), 'SECOND', char(10), 'third'), 'beng') as tokens;
+tokens
+["SECOND", "third", "word"]
+select tokenize(_utf8mb4'English，中文 Café CAFÉ', 'beng') as tokens;
+tokens
+["café", "english，中文"]
+select tokenize(_utf8mb4'I İ ı i' collate utf8mb4_bin, 'beng') as tokens;
+tokens
+[]
+select tokenize('!!!', 'beng') as tokens;
+tokens
+[]
+drop table if exists beng_ascii_fast_path;
+Warnings:
+Note	1051	Unknown table 'oceanbase.beng_ascii_fast_path'
+create table beng_ascii_fast_path (
+id int primary key,
+body varchar(200),
+fulltext index ft_body (body) with parser beng
+);
+insert into beng_ascii_fast_path values
+(1, 'Apple, BANANA'), (2, 'banana pear'), (3, 'apple tart');
+select id from beng_ascii_fast_path
+where match(body) against ('APPLE' in boolean mode) order by id;
+id
+1
+3
+update beng_ascii_fast_path set body = 'PEAR' where id = 1;
+select id from beng_ascii_fast_path
+where match(body) against ('apple' in boolean mode) order by id;
+id
+3
+drop table beng_ascii_fast_path;

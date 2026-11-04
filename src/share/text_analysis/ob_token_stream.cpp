@@ -96,9 +96,14 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
     const char *doc = input_doc_->ptr_;
     const uint32_t doc_len = get_input_buf_len();
     int64_t token_len = 0;
+    const bool utf8 = cs_->cset == &ob_charset_utf8mb4_handler;
+    const auto char_length = [&](uint32_t pos) -> int64_t {
+      return utf8 && static_cast<unsigned char>(doc[pos]) < 0x80
+          ? 1 : ob_mbcharlen_ptr(cs_, doc + pos, doc + doc_len);
+    };
     // to next non-whitespace pos
     while (OB_SUCC(ret) && found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = char_length(trav_pos_);
       trav_pos_ += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {// if char is invalid, just skip the rest of document
         iter_end_ = true;
@@ -112,7 +117,7 @@ int ObTextWhitespaceTokenizer::get_next(ObDatum &next_token, int64_t &token_freq
 
     // to next whitespace pos
     while (OB_SUCC(ret) && !found_delimiter()) {
-      const int64_t c_len = ob_mbcharlen_ptr(cs_, doc + trav_pos_, doc + doc_len);
+      const int64_t c_len = char_length(trav_pos_);
       trav_pos_ += c_len;
       token_len += c_len;
       if (trav_pos_ >= doc_len || 0 == c_len) {
@@ -138,7 +143,10 @@ bool ObTextWhitespaceTokenizer::found_delimiter()
 {
   bool found = false;
   const char *curr_char = input_doc_->ptr_ + trav_pos_;
-  found = ob_isspace(cs_, *curr_char) || ob_iscntrl(cs_, *curr_char) || ob_ispunct(cs_, *curr_char);
+  if (cs_->ctype != nullptr) {
+    const unsigned char byte = static_cast<unsigned char>(*curr_char);
+    found = (cs_->ctype[byte + 1] & (_MY_SPC | _MY_CTR | _MY_PNT)) != 0;
+  }
   return found;
 }
 
@@ -295,7 +303,18 @@ int ObBasicEnglishNormalizer::get_next(ObDatum &next_token, int64_t &token_freq)
     } else {
       ObString norm_alnum_token(norm_token_len, norm_token_ptr);
       ObString norm_lower_token;
-      if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
+      // The input slice remains valid until the next token. Use the
+      // collation's Unicode mapping to identify already normalized ASCII.
+      bool unchanged = cs_->cset == &ob_charset_utf8mb4_handler &&
+                       cs_->caseinfo != nullptr && cs_->caseinfo->maxchar >= 0x7f;
+      for (uint32_t i = 0; unchanged && i < norm_token_len; ++i) {
+        const unsigned char byte = static_cast<unsigned char>(norm_token_ptr[i]);
+        const auto *ascii = cs_->caseinfo->page[0];
+        unchanged = byte < 0x80 && (ascii == nullptr || ascii[byte].tolower == byte);
+      }
+      if (unchanged) {
+        next_token.set_string(norm_alnum_token);
+      } else if (OB_FAIL(ObCharset::tolower(cs_, norm_alnum_token, norm_lower_token, norm_allocator_))) {
       } else {
         next_token.set_string(norm_lower_token);
       }

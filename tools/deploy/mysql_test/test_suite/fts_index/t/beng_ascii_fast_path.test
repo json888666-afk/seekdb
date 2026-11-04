@@ -1,0 +1,20 @@
+connection default;
+select tokenize('lowercase,UPPERCASE 123 lowerCASE', 'beng') as tokens;
+select tokenize(concat('word', char(9), 'SECOND', char(10), 'third'), 'beng') as tokens;
+select tokenize(_utf8mb4'English，中文 Café CAFÉ', 'beng') as tokens;
+select tokenize(_utf8mb4'I İ ı i' collate utf8mb4_bin, 'beng') as tokens;
+select tokenize('!!!', 'beng') as tokens;
+drop table if exists beng_ascii_fast_path;
+create table beng_ascii_fast_path (
+  id int primary key,
+  body varchar(200),
+  fulltext index ft_body (body) with parser beng
+);
+insert into beng_ascii_fast_path values
+  (1, 'Apple, BANANA'), (2, 'banana pear'), (3, 'apple tart');
+select id from beng_ascii_fast_path
+  where match(body) against ('APPLE' in boolean mode) order by id;
+update beng_ascii_fast_path set body = 'PEAR' where id = 1;
+select id from beng_ascii_fast_path
+  where match(body) against ('apple' in boolean mode) order by id;
+drop table beng_ascii_fast_path;
