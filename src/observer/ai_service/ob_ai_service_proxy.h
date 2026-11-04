@@ -33,11 +33,25 @@ class ObMySQLResult;
 namespace share
 {
 
+struct ObAiColumnLease
+{
+  uint64_t table_id_ = OB_INVALID_ID;
+  ObString request_id_;
+  ObString token_;
+  int64_t task_count_ = 0;
+};
+
 class ObAiServiceProxy
 {
 public:
   ObAiServiceProxy() = default;
   ~ObAiServiceProxy() = default;
+  // A request belongs to one business row and may have multiple result columns.
+  // Acquisition commits before any model call. An empty queue returns OB_ENTRY_NOT_EXIST.
+  static int claim_ai_column_request(common::ObArenaAllocator &allocator,
+                                     common::ObISQLClient &sql_proxy,
+                                     int64_t lease_us,
+                                     ObAiColumnLease &lease);
   // ai endpoint
   static int insert_ai_endpoint(common::ObMySQLTransaction &trans, const int64_t new_endpoint_version, const ObAiModelEndpointInfo &endpoint);
   static int select_ai_endpoint(common::ObArenaAllocator &allocator, common::ObISQLClient &sql_proxy,

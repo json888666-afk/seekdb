@@ -24,6 +24,9 @@
 #include "observer/ob_inner_sql_connection.h"
 #include "common/ob_timeout_ctx.h"
 #include "lib/utility/ob_utility.h"
+#include "lib/utility/utility.h"
+#include "sql/engine/expr/ob_expr_uuid.h"
+#include "share/inner_table/ob_inner_table_schema_constants.h"
 
 #define USING_LOG_PREFIX SHARE
 
@@ -31,6 +34,81 @@ using namespace oceanbase::share;
 using namespace oceanbase::common;
 using namespace oceanbase::sqlclient;
 using namespace oceanbase::transaction;
+
+int ObAiServiceProxy::claim_ai_column_request(ObArenaAllocator &allocator,
+                                                ObISQLClient &sql_proxy,
+                                                int64_t lease_us,
+                                                ObAiColumnLease &lease)
+{
+  int ret = OB_SUCCESS;
+  ObMySQLTransaction trans;
+  ObAiColumnLease claimed;
+  if (lease_us <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(trans.start(&sql_proxy))) {
+  } else {
+    ObSqlString sql;
+    OZ (sql.append_fmt("SELECT table_id, request_id FROM oceanbase.%s "
+        "WHERE eligible_ts <= NOW(6) AND (lease_expiry IS NULL OR lease_expiry <= NOW(6)) "
+        "ORDER BY eligible_ts, table_id, request_id, column_id LIMIT 1 FOR UPDATE",
+        OB_ALL_AI_COLUMN_TASK_TNAME));
+    {
+      ObISQLClient::ReadResult res;
+      OZ (trans.read(res, sql.ptr()));
+      auto *row = res.get_result();
+      CK (OB_NOT_NULL(row));
+      OZ (row->next());
+      if (ret == OB_ITER_END) {
+        ret = OB_ENTRY_NOT_EXIST;
+      } else if (OB_SUCC(ret)) {
+        ObString request;
+        EXTRACT_INT_FIELD_MYSQL(*row, "table_id", claimed.table_id_, uint64_t);
+        EXTRACT_VARCHAR_FIELD_MYSQL(*row, "request_id", request);
+        OZ (ob_write_string(allocator, request, claimed.request_id_));
+      }
+    }
+
+    ObSqlString group_condition;
+    OZ (group_condition.append_fmt("table_id=%llu AND request_id=",
+                                    static_cast<unsigned long long>(claimed.table_id_)));
+    OZ (sql_append_hex_escape_str(claimed.request_id_, group_condition));
+    sql.reset();
+    OZ (sql.append_fmt("SELECT COUNT(*) AS task_count FROM oceanbase.%s WHERE %s",
+                       OB_ALL_AI_COLUMN_TASK_TNAME, group_condition.ptr()));
+    {
+      ObISQLClient::ReadResult res;
+      OZ (trans.read(res, sql.ptr()));
+      auto *row = res.get_result();
+      CK (OB_NOT_NULL(row));
+      OZ (row->next());
+      if (OB_SUCC(ret)) {
+        EXTRACT_INT_FIELD_MYSQL(*row, "task_count", claimed.task_count_, int64_t);
+        CK (claimed.task_count_ > 0);
+      }
+    }
+
+    using oceanbase::sql::ObExprUuid;
+    using oceanbase::sql::UuidCommon;
+    char token[UuidCommon::LENGTH_UUID + 1] = {};
+    OZ (ObExprUuid::gen_server_uuid(token, UuidCommon::LENGTH_UUID));
+    OZ (ob_write_string(allocator, ObString::make_string(token), claimed.token_));
+    sql.reset();
+    OZ (sql.append_fmt("UPDATE oceanbase.%s SET lease_token='%s', "
+        "lease_expiry=TIMESTAMPADD(MICROSECOND,%lld,NOW(6)) "
+        "WHERE %s AND eligible_ts <= NOW(6) AND (lease_expiry IS NULL OR lease_expiry <= NOW(6))",
+        OB_ALL_AI_COLUMN_TASK_TNAME, token, static_cast<long long>(lease_us), group_condition.ptr()));
+    int64_t affected = 0;
+    OZ (trans.write(sql.ptr(), affected));
+    if (OB_SUCC(ret) && affected != claimed.task_count_) {
+      ret = OB_EAGAIN;
+    }
+    ret = trans.handle_trans_in_the_end(ret);
+    if (OB_SUCC(ret)) {
+      lease = claimed;
+    }
+  }
+  return ret;
+}
 
 int ObAiServiceProxy::insert_ai_endpoint(ObMySQLTransaction &trans, const int64_t new_endpoint_version, const ObAiModelEndpointInfo &endpoint)
 {
