@@ -81,6 +81,8 @@ public:
   //user var
   bool is_contains_assignment() const {return is_contains_assignment_;}
   void set_contains_assignment(bool v) {is_contains_assignment_ = v;}
+  ObIArray<ObString> &get_ai_read_checks() { return ai_read_checks_; }
+  const ObIArray<ObString> &get_ai_read_checks() const { return ai_read_checks_; }
   int set_vars(const common::ObIArray<ObVarInfo> &vars);
   const common::ObIArray<ObVarInfo> &get_vars() const { return vars_; }
   /**
@@ -415,6 +417,7 @@ private:
   share::schema::ObStmtNeedPrivs stmt_need_privs_;
   // Involved system variables and user variables
   common::ObFixedArray<ObVarInfo, common::ObIAllocator> vars_;
+  common::ObFixedArray<ObString, common::ObIAllocator> ai_read_checks_;
   ObSqlExpressionFactory sql_expression_factory_;
   ObExprOperatorFactory expr_op_factory_;
   stmt::StmtType literal_stmt_type_; // meaning reference ObBasicStmt corresponding definition

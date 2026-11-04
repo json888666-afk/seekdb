@@ -27,6 +27,7 @@
 #include "sql/monitor/show_trace/ob_show_trace.h"
 #include "sql/engine/table/ob_table_scan_op.h"
 #include "share/ob_ddl_checksum.h"
+#include "query/session/ob_inner_sql_connection_access.h"
 
 using namespace oceanbase::sql;
 using namespace oceanbase::common;
@@ -41,6 +42,52 @@ namespace sql
 {
 namespace
 {
+int run_ai_read_checks(ObSQLSessionInfo &session, const ObPhysicalPlan &plan)
+{
+  int ret = OB_SUCCESS;
+  const auto &checks = plan.get_ai_read_checks();
+  if (checks.empty() || session.get_ddl_info().is_ai_column_writeback()) {
+    return ret;
+  }
+  common::sqlclient::ObISQLConnectionGuard connection;
+  ObSQLSessionInfo::StmtSavedValue saved_session;
+  OZ (query::ObInnerSQLConnectionAccess::create_connection_with_external_session(&session, connection));
+  CK (OB_NOT_NULL(connection.get_ptr()));
+  OZ (session.begin_nested_session(saved_session, true));
+  if (OB_SUCC(ret)) {
+    const ObSessionDDLInfo saved = session.get_ddl_info();
+    session.get_ddl_info().set_ai_column_writeback(true);
+    for (int64_t i = 0; OB_SUCC(ret) && i < checks.count(); ++i) {
+      ObISQLClient::ReadResult result;
+      OZ (connection.get_ptr()->execute_read(checks.at(i), result));
+      auto *row = result.get_result();
+      CK (OB_NOT_NULL(row));
+      if (OB_SUCC(ret)) {
+        ret = row->next();
+        if (ret == OB_ITER_END) {
+          ret = OB_SUCCESS;
+        } else if (OB_SUCC(ret)) {
+          uint64_t table_id = OB_INVALID_ID;
+          uint64_t column_id = OB_INVALID_ID;
+          EXTRACT_INT_FIELD_MYSQL(*row, "table_id", table_id, uint64_t);
+          EXTRACT_INT_FIELD_MYSQL(*row, "column_id", column_id, uint64_t);
+          if (OB_SUCC(ret)) {
+            ret = OB_AI_COLUMN_NOT_READY;
+            LOG_USER_ERROR(OB_AI_COLUMN_NOT_READY, static_cast<unsigned long long>(table_id),
+                           static_cast<unsigned long long>(column_id));
+          }
+        }
+      }
+    }
+    session.set_ddl_info(saved);
+    const int end_ret = session.end_nested_session(saved_session);
+    if (OB_SUCC(ret)) {
+      ret = end_ret;
+    }
+  }
+  return ret;
+}
+
 int find_table_scan_table_id(const ObOpSpec *spec, uint64_t &table_id)
 {
   int ret = OB_SUCCESS;
@@ -462,6 +509,7 @@ OB_INLINE int ObResultSet::do_open_plan(ObExecContext &ctx)
 
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(start_stmt())) {
+  } else if (OB_FAIL(run_ai_read_checks(my_session_, *physical_plan_))) {
   } else {
     /* Set exec_result_ to the executor's runtime environment for returning data */
     /* execute plan,

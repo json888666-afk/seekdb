@@ -115,6 +115,100 @@ struct ObFilterTSC
 {
 };
 
+namespace {
+
+int append_strict_read_identifier(ObSqlString &sql, const ObString &name)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append("`"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < name.length(); ++i) {
+    if (name[i] == '`') {
+      OZ (sql.append("`"));
+    }
+    OZ (sql.append(name.ptr() + i, 1));
+  }
+  OZ (sql.append("`"));
+  return ret;
+}
+
+int compile_ai_read_checks(const ObLogPlan &plan, ObPhysicalPlan &physical)
+{
+  int ret = OB_SUCCESS;
+  const auto &optimizer = plan.get_optimizer_context();
+  auto *session = optimizer.get_session_info();
+  auto *guard = optimizer.get_schema_guard();
+  ObObj enabled;
+  CK (OB_NOT_NULL(session), OB_NOT_NULL(guard));
+  OZ (session->get_sys_variable(share::SYS_VAR_AI_COLUMN_STRICT_READ, enabled));
+  if (OB_SUCC(ret) && enabled.get_int() != 0 && !session->get_ddl_info().is_ai_column_writeback()) {
+    ObSEArray<const ObDMLStmt *, 8> statements;
+    ObSEArray<ObString, 8> checks;
+    OZ (statements.push_back(plan.get_stmt()));
+    for (int64_t i = 0; OB_SUCC(ret) && i < statements.count(); ++i) {
+      const auto &stmt = *statements.at(i);
+      ObSEArray<ObSelectStmt *, 8> children;
+      ObSEArray<ObRawExpr *, 32> expressions;
+      OZ (stmt.get_child_stmts(children));
+      OZ (stmt.get_relation_exprs(expressions));
+      for (int64_t j = 0; OB_SUCC(ret) && j < children.count(); ++j) {
+        const auto *child = children.at(j);
+        if (child != nullptr && !has_exist_in_array(statements, static_cast<const ObDMLStmt *>(child))) {
+          OZ (statements.push_back(child));
+        }
+      }
+      for (int64_t j = 0; OB_SUCC(ret) && j < expressions.count(); ++j) {
+        auto *expr = expressions.at(j);
+        CK (OB_NOT_NULL(expr));
+        if (OB_SUCC(ret) && expr->is_column_ref_expr()) {
+          const auto &ref = static_cast<const ObColumnRefRawExpr &>(*expr);
+          const auto *item = stmt.get_table_item_by_id(ref.get_table_id());
+          if (item == nullptr || !item->is_basic_table()) {
+            continue;
+          }
+          const share::schema::ObTableSchema *table = nullptr;
+          OZ (guard->get_table_schema(item->ref_id_, table));
+          CK (OB_NOT_NULL(table));
+          if (OB_SUCC(ret)) {
+            const auto *column = table->get_column_schema(ref.get_column_id());
+            if (column != nullptr && column->is_ai_result_column()) {
+              const share::schema::ObDatabaseSchema *db = nullptr;
+              char state[64];
+              ObSqlString sql;
+              OZ (guard->get_database_schema(table->get_database_id(), db));
+              CK (OB_NOT_NULL(db));
+              OZ (share::schema::ObColumnSchemaV2::ai_column_companion_name(
+                  state, sizeof(state), column->get_column_id(), 0));
+              OZ (sql.append_fmt("SELECT %llu AS table_id,%llu AS column_id FROM ",
+                  static_cast<unsigned long long>(table->get_table_id()),
+                  static_cast<unsigned long long>(column->get_column_id())));
+              OZ (append_strict_read_identifier(sql, db->get_database_name_str()));
+              OZ (sql.append("."));
+              OZ (append_strict_read_identifier(sql, table->get_table_name_str()));
+              OZ (sql.append_fmt(" WHERE `%s` IS NULL OR `%s`<>1 LIMIT 1", state, state));
+              if (OB_SUCC(ret) && !has_exist_in_array(checks, sql.string())) {
+                ObString copied;
+                OZ (ob_write_string(physical.get_allocator(), sql.string(), copied));
+                OZ (checks.push_back(copied));
+              }
+            }
+          }
+        } else if (OB_SUCC(ret)) {
+          for (int64_t k = 0; OB_SUCC(ret) && k < expr->get_param_count(); ++k) {
+            auto *child = expr->get_param_expr(k);
+            if (child != nullptr && !has_exist_in_array(expressions, child)) {
+              OZ (expressions.push_back(child));
+            }
+          }
+        }
+      }
+    }
+    OZ (physical.get_ai_read_checks().assign(checks));
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObStaticEngineCG::generate(const ObLogPlan &log_plan, ObPhysicalPlan &phy_plan)
 {
   int ret = OB_SUCCESS;
@@ -141,6 +235,7 @@ int ObStaticEngineCG::generate(const ObLogPlan &log_plan, ObPhysicalPlan &phy_pl
   PartialExprFrameInfoGen partial_frame_gen;
   if (OB_ISNULL(log_plan.get_plan_root())) {
     ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(compile_ai_read_checks(log_plan, phy_plan))) {
   } else if (OB_FAIL(set_properties_pre(log_plan, phy_plan))) {
   } else if (OB_FAIL(get_query_compress_type(log_plan, compress_type))) {
   } else if (OB_FAIL(postorder_generate_op(
