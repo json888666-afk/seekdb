@@ -1435,6 +1435,7 @@ int ObSchemaServiceSQLImpl::fetch_all_column_info(
       } else if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_column_schema(check_deleted, *result, table_schema_array))) {
       }
     }
+    res.reset();
   }
   for (int64_t i = 0; OB_SUCC(ret) && i < table_schema_array.count(); ++i) {
     if (table_schema_array.at(i) != nullptr) {
@@ -4238,6 +4239,7 @@ int ObSchemaServiceSQLImpl::fetch_column_info(const ObRefreshSchemaStatus &schem
       } else if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_column_schema(check_deleted, *result, table_schema))) {
       }
     }
+    res.reset();
   }
   if (OB_SUCC(ret) && table_schema != nullptr) {
     OZ (restore_ai_column_definitions(schema_status, schema_version, sql_client, *table_schema));
