@@ -35,6 +35,7 @@
 #include "share/rc/ob_server_runtime.h"
 #include "share/schema/ob_table_schema.h"
 #include "sql/engine/expr/ob_obj_cast_runtime.h"
+#include "sql/engine/expr/ob_expr_operator_factory.h"
 
 namespace oceanbase
 {
@@ -1776,7 +1777,7 @@ int check_ai_column_input(const ParseNode &expr)
     const ParseNode &node = *pending.at(i);
     if (node.type_ == T_SELECT || node.type_ == T_REF_QUERY || node.type_ == T_QUESTIONMARK ||
         node.type_ == T_SYSTEM_VARIABLE || node.type_ == T_USER_VARIABLE_IDENTIFIER ||
-        node.type_ == T_OP_GET_USER_VAR) {
+        node.type_ == T_OP_GET_USER_VAR || node.type_ == T_FUN_UDF) {
       ret = OB_NOT_SUPPORTED;
     } else if (node.type_ == T_COLUMN_REF) {
       if (node.num_child_ != 3 || node.children_[0] != nullptr || node.children_[1] != nullptr ||
@@ -1786,8 +1787,19 @@ int check_ai_column_input(const ParseNode &expr)
     } else if (node.type_ == T_FUN_SYS && node.num_child_ == 2 && node.children_[0] != nullptr) {
       const auto *name = node.children_[0];
       const ObString function(name->str_len_, name->str_value_);
-      if (0 == function.case_compare("AI_COMPLETE") || 0 == function.case_compare("AI_EMBED") ||
-          0 == function.case_compare("AI_RERANK")) {
+      const ObItemType type = ObExprOperatorFactory::get_type_by_name(function);
+      bool exists = false;
+      bool internal = false;
+      ObExprOperatorFactory::get_internal_info_by_name(function, exists, internal);
+      // The background session must never resolve a user routine or a
+      // privileged internal function on behalf of the DDL issuer.
+      if (!exists || internal || type == T_INVALID || type == T_FUN_SYS_AI_COMPLETE ||
+          type == T_FUN_SYS_AI_EMBED || type == T_FUN_SYS_AI_RERANK ||
+          type == T_FUN_SYS_TMP_FILE_OPEN || type == T_FUN_SYS_TMP_FILE_CLOSE ||
+          type == T_FUN_SYS_TMP_FILE_WRITE || type == T_FUN_SYS_TMP_FILE_READ ||
+          type == T_FUN_SYS_GET_LOCK || type == T_FUN_SYS_RELEASE_LOCK ||
+          type == T_FUN_SYS_RELEASE_ALL_LOCKS || type == T_FUN_SYS_SLEEP ||
+          0 == function.case_compare("LOAD_FILE")) {
         ret = OB_NOT_SUPPORTED;
       }
     }
