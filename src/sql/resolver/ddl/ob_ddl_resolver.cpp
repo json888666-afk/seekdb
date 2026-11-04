@@ -16,6 +16,8 @@
 
 #define USING_LOG_PREFIX SQL_RESV
 #include "share/ai_service/ai_column_rule.h"
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include "config_bridge.h"
 #include "ob_ddl_resolver.h"
 #include "data_plane/blocksstable/ob_index_block_util.h"
@@ -1801,6 +1803,44 @@ int check_ai_column_input(const ParseNode &expr)
   return ret;
 }
 
+int store_ai_column_definition(const share::AiColumnRule &rule, ObColumnSchemaV2 &column)
+{
+  int ret = OB_SUCCESS;
+  const char *prompt = "";
+  switch (rule.result_type) {
+    case share::AiColumnResultType::JSON:
+      prompt = "Return exactly one valid JSON value. Do not include markdown or extra text.";
+      break;
+    case share::AiColumnResultType::INTEGER:
+      prompt = "Return exactly one base-10 integer. Do not include extra text.";
+      break;
+    case share::AiColumnResultType::NUMBER:
+      prompt = "Return exactly one number. Do not include extra text.";
+      break;
+    default:
+      break;
+  }
+
+  rapidjson::StringBuffer buffer;
+  rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+  if (!writer.StartObject() ||
+      !writer.Key("format_version") || !writer.Int(1) ||
+      !writer.Key("expression") ||
+      !writer.String(rule.normalized_expression.data(), rule.normalized_expression.size()) ||
+      !writer.Key("system_prompt") || !writer.String(prompt) ||
+      !writer.Key("embedding_dimension") || !writer.Int64(rule.vector_dimension) ||
+      !writer.EndObject()) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (buffer.GetSize() > OB_MAX_DEFAULT_VALUE_LENGTH) {
+    ret = OB_SIZE_OVERFLOW;
+  } else if (OB_FAIL(column.set_ai_column_rule(
+                 ObString(buffer.GetSize(), buffer.GetString()), rule.max_retries))) {
+  } else {
+    column.add_column_flag(AI_RESULT_COLUMN_FLAG);
+  }
+  return ret;
+}
+
 int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &column)
 {
   int ret = OB_SUCCESS;
@@ -1894,10 +1934,7 @@ int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &colum
     } else if (error != share::AiColumnRuleError::OK) {
       ret = OB_NOT_SUPPORTED;
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN definition");
-    } else if (OB_FAIL(column.set_ai_column_rule(
-                   ObString(rule.normalized_expression.size(), rule.normalized_expression.data()), rule.max_retries))) {
-    } else {
-      column.add_column_flag(AI_RESULT_COLUMN_FLAG);
+    } else if (OB_FAIL(store_ai_column_definition(rule, column))) {
     }
   }
   return ret;
