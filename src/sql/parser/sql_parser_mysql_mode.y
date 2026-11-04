@@ -372,7 +372,7 @@ END_P SET_VAR DELIMITER
         ORGANIZATION
 //-----------------------------non_reserved keyword end---------------------------------------------
 %type <node> sql_stmt stmt_list stmt opt_end_p
-%type <node> select_stmt update_stmt delete_stmt copy_csv_options copy_csv_stmt
+%type <node> select_stmt update_stmt delete_stmt copy_csv_options copy_csv_stmt copy_csv_source
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt fork_table_stmt fork_database_stmt diff_table_stmt merge_table_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated parallel_option lob_storage_clause lob_storage_parameter lob_storage_parameters lob_chunk_size
 %type <node> index_or_heap
@@ -8445,8 +8445,27 @@ copy_csv_options:
 }
 ;
 
+copy_csv_source:
+select_with_parens { $$ = $1; }
+| relation_factor
+{
+  ParseNode *star = NULL;
+  ParseNode *project = NULL;
+  ParseNode *projects = NULL;
+  ParseNode *tables = NULL;
+  malloc_terminal_node(star, result->malloc_pool_, T_STAR);
+  malloc_non_terminal_node(project, result->malloc_pool_, T_PROJECT_STRING, 1, star);
+  dup_string_to_node(project, result->malloc_pool_, "*");
+  merge_nodes(projects, result, T_PROJECT_LIST, project);
+  merge_nodes(tables, result, T_FROM_LIST, $1);
+  malloc_select_node($$, result->malloc_pool_);
+  $$->children_[PARSE_SELECT_SELECT] = projects;
+  $$->children_[PARSE_SELECT_FROM] = tables;
+}
+;
+
 copy_csv_stmt:
-COPY select_with_parens TO STRING_VALUE '(' FORMAT relation_name copy_csv_options ')'
+COPY copy_csv_source TO STRING_VALUE '(' FORMAT relation_name copy_csv_options ')'
 {
   ParseNode *into = NULL;
   if ($2->children_[PARSE_SELECT_INTO] != NULL || $2->children_[PARSE_SELECT_INTO_EXTRA] != NULL) {

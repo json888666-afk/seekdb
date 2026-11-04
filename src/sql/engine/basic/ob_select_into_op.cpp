@@ -201,18 +201,18 @@ int ObSelectIntoOp::calc_outfile_path()
 #ifdef __linux__
 namespace {
 
-bool write_file_sql_csv_field(FILE *file, const ObString &text, bool quote)
+bool write_file_sql_csv_field(FILE *file, const ObString &text, bool quote, char quote_char, char escape_char)
 {
-  if (quote && std::fputc('"', file) == EOF) {
+  if (quote && std::fputc(quote_char, file) == EOF) {
     return false;
   }
   for (int32_t i = 0; i < text.length(); ++i) {
-    if ((quote && text[i] == '"' && std::fputc('"', file) == EOF) ||
+    if ((quote && (text[i] == quote_char || text[i] == escape_char) && std::fputc(escape_char, file) == EOF) ||
         std::fputc(static_cast<unsigned char>(text[i]), file) == EOF) {
       return false;
     }
   }
-  return !quote || std::fputc('"', file) != EOF;
+  return !quote || std::fputc(quote_char, file) != EOF;
 }
 
 struct FileSqlCopyPath
@@ -294,9 +294,12 @@ int ObSelectIntoOp::copy_file_sql_csv()
                 ::close(fd);
                 ret = OB_IO_ERROR;
               }
+              const char delimiter = MY_SPEC.field_str_.get_string()[0];
+              const char quote_char = MY_SPEC.closed_cht_.get_string()[0];
+              const char escape_char = MY_SPEC.escaped_cht_.get_string()[0];
               for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.file_sql_copy_names_.count(); ++i) {
-                if ((i > 0 && std::fputc(',', file.get()) == EOF) ||
-                    !write_file_sql_csv_field(file.get(), MY_SPEC.file_sql_copy_names_.at(i), true)) {
+                if ((i > 0 && std::fputc(delimiter, file.get()) == EOF) ||
+                    !write_file_sql_csv_field(file.get(), MY_SPEC.file_sql_copy_names_.at(i), true, quote_char, escape_char)) {
                   ret = OB_IO_ERROR;
                 }
               }
@@ -322,7 +325,7 @@ int ObSelectIntoOp::copy_file_sql_csv()
                     ObObj obj;
                     ObString value;
                     bool quote = true;
-                    if (i > 0 && std::fputc(',', file.get()) == EOF) {
+                    if (i > 0 && std::fputc(delimiter, file.get()) == EOF) {
                       ret = OB_IO_ERROR;
                     } else if (OB_FAIL(expr->eval(eval_ctx_, datum))) {
                     } else if (datum->is_null()) {
@@ -345,7 +348,7 @@ int ObSelectIntoOp::copy_file_sql_csv()
                         value.assign_ptr(buffer.data(), pos);
                       }
                     }
-                    if (OB_SUCC(ret) && !write_file_sql_csv_field(file.get(), value, quote)) {
+                    if (OB_SUCC(ret) && !write_file_sql_csv_field(file.get(), value, quote, quote_char, escape_char)) {
                       ret = OB_IO_ERROR;
                     }
                   }

@@ -3116,7 +3116,13 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
           } else {
             into_item->file_sql_copy_ = true;
             into_item->is_single_ = true;
+            into_item->field_str_.set_varchar(ObString(","));
+            into_item->closed_cht_.set_varchar(ObString("\""));
+            into_item->escaped_cht_.set_varchar(ObString("\""));
             bool seen_null = false;
+            bool seen_delimiter = false;
+            bool seen_quote = false;
+            bool seen_escape = false;
             for (const ParseNode *options = node->children_[2]; OB_SUCC(ret) && options != nullptr;
                  options = options->children_[0]) {
               const auto *option = options->children_[1];
@@ -3127,16 +3133,40 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
                 into_item->file_sql_copy_header_ = true;
               } else if (name.case_compare("nullstr") == 0 && value != nullptr && !seen_null) {
                 const ObString token(value->str_len_, value->str_value_);
-                for (int32_t i = 0; OB_SUCC(ret) && i < token.length(); ++i) {
-                  if (token[i] == ',' || token[i] == '"' || token[i] == '\n' || token[i] == '\r' ||
-                      token[i] == '\0') {
-                    ret = OB_INVALID_ARGUMENT;
-                  }
-                }
                 OZ (ob_write_string(*allocator_, token, into_item->file_sql_copy_null_));
                 seen_null = true;
+              } else if (value != nullptr && value->str_len_ == 1 &&
+                         value->str_value_[0] != '\0' && value->str_value_[0] != '\n' &&
+                         value->str_value_[0] != '\r') {
+                if (name.case_compare("delimiter") == 0 && !seen_delimiter) {
+                  OZ (resolve_into_const_node(value, into_item->field_str_));
+                  seen_delimiter = true;
+                } else if (name.case_compare("quote") == 0 && !seen_quote) {
+                  OZ (resolve_into_const_node(value, into_item->closed_cht_));
+                  seen_quote = true;
+                } else if (name.case_compare("escape") == 0 && !seen_escape) {
+                  OZ (resolve_into_const_node(value, into_item->escaped_cht_));
+                  seen_escape = true;
+                } else {
+                  ret = OB_INVALID_ARGUMENT;
+                }
               } else {
                 ret = OB_INVALID_ARGUMENT;
+              }
+            }
+            if (OB_SUCC(ret)) {
+              const char delimiter = into_item->field_str_.get_string()[0];
+              const char quote = into_item->closed_cht_.get_string()[0];
+              const char escape = into_item->escaped_cht_.get_string()[0];
+              const auto &token = into_item->file_sql_copy_null_;
+              if (delimiter == quote || delimiter == escape) {
+                ret = OB_INVALID_ARGUMENT;
+              }
+              for (int32_t i = 0; OB_SUCC(ret) && i < token.length(); ++i) {
+                if (token[i] == delimiter || token[i] == quote || token[i] == '\n' ||
+                    token[i] == '\r' || token[i] == '\0') {
+                  ret = OB_INVALID_ARGUMENT;
+                }
               }
             }
           }
