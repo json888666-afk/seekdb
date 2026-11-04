@@ -3422,6 +3422,9 @@ int ObAlterTableResolver::resolve_add_column(const ParseNode &node, ObColumnName
                                                           is_modify_column_visibility,
                                                           resolved_cols,
                                                           false))) {
+        } else if (!alter_column_schema.get_ai_column_expression().empty() &&
+                   OB_FAIL(bind_ai_column_dependencies(*node.children_[i]->children_[4], *table_schema_,
+                                                       alter_column_schema))) {
         } else if (OB_FAIL(fill_column_schema_according_stat(stat, alter_column_schema))) {
         } else if (OB_FAIL(set_column_collation(alter_column_schema))) {
         }

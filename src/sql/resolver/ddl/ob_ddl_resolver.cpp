@@ -1903,6 +1903,62 @@ int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &colum
 
 } // namespace
 
+bool ObDDLResolver::has_ai_column_companions(const ObTableSchema &table, const ObColumnSchemaV2 &column)
+{
+  char name[64];
+  const ObColumnSchemaV2 *state = nullptr;
+  return OB_SUCCESS == ObColumnSchemaV2::ai_column_companion_name(name, sizeof(name), column.get_column_id(), 0) &&
+         (state = table.get_column_schema(ObString::make_string(name))) != nullptr && state->is_hidden();
+}
+
+int ObDDLResolver::bind_ai_column_dependencies(const ParseNode &expression, const ObTableSchema &table_schema,
+                                               ObColumnSchemaV2 &column)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<const ParseNode *, 16> pending;
+  ObSEArray<uint64_t, 8> dependencies;
+  OZ (pending.push_back(&expression));
+  for (int64_t idx = 0; OB_SUCC(ret) && idx < pending.count(); ++idx) {
+    const ParseNode &expr = *pending.at(idx);
+    if (expr.type_ == T_COLUMN_REF) {
+      const ParseNode *dependency_name = expr.children_[2];
+      const auto *dependency = table_schema.get_column_schema(
+          ObString(dependency_name->str_len_, dependency_name->str_value_));
+      if (dependency == nullptr) {
+        ret = OB_ERR_BAD_FIELD_ERROR;
+        LOG_USER_ERROR(OB_ERR_BAD_FIELD_ERROR, dependency_name->str_len_, dependency_name->str_value_,
+                       static_cast<int>(sizeof("AI COLUMN") - 1), "AI COLUMN");
+      } else if (dependency->get_column_id() == column.get_column_id() || dependency->is_hidden() ||
+                 !dependency->get_ai_column_expression().empty() || has_ai_column_companions(table_schema, *dependency)) {
+        ret = OB_NOT_SUPPORTED;
+        LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN dependency on an AI or hidden column");
+      } else {
+        bool present = false;
+        for (int64_t d = 0; !present && d < dependencies.count(); ++d) {
+          present = dependencies.at(d) == dependency->get_column_id();
+        }
+        if (!present) {
+          OZ (dependencies.push_back(dependency->get_column_id()));
+        }
+      }
+    } else {
+      for (int64_t c = 0; OB_SUCC(ret) && c < expr.num_child_; ++c) {
+        if (expr.children_[c] != nullptr) {
+          OZ (pending.push_back(expr.children_[c]));
+        }
+      }
+    }
+  }
+  ObSqlString ids;
+  OZ (ids.append("["));
+  for (int64_t d = 0; OB_SUCC(ret) && d < dependencies.count(); ++d) {
+    OZ (ids.append_fmt(d == 0 ? "%llu" : ",%llu", static_cast<unsigned long long>(dependencies.at(d))));
+  }
+  OZ (ids.append("]"));
+  OZ (column.set_ai_column_dependencies(ids.string()));
+  return ret;
+}
+
 int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
                                              ParseNode *node, /* column_definition */
                                              ObColumnResolveStat &resolve_stat,
@@ -2018,7 +2074,9 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
   }
   if (OB_SUCC(ret) && AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
     if (OB_FAIL(validate_ai_column_definition(*node, column))) {
-    } else if (stmt::T_CREATE_TABLE != stmt_->get_stmt_type() || is_create_table_as) {
+    } else if ((stmt::T_CREATE_TABLE != stmt_->get_stmt_type() &&
+                (stmt::T_ALTER_TABLE != stmt_->get_stmt_type() ||
+                 OB_DDL_ADD_COLUMN != static_cast<AlterColumnSchema &>(column).alter_type_)) || is_create_table_as) {
       ret = OB_NOT_SUPPORTED;
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN in this DDL form");
     }

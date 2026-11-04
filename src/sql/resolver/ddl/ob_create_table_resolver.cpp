@@ -907,46 +907,7 @@ int ObCreateTableResolver::resolve_table_elements(const ParseNode *node,
       if (OB_ISNULL(result) || result->get_ai_column_expression().empty()) {
         ret = OB_ERR_UNEXPECTED;
       } else {
-        ObSEArray<const ParseNode *, 16> pending;
-        ObSEArray<uint64_t, 8> dependencies;
-        OZ (pending.push_back(element->children_[4]));
-        for (int64_t idx = 0; OB_SUCC(ret) && idx < pending.count(); ++idx) {
-          const ParseNode &expr = *pending.at(idx);
-          if (expr.type_ == T_COLUMN_REF) {
-            const ParseNode *dependency_name = expr.children_[2];
-            const auto *dependency = table_schema.get_column_schema(
-                ObString(dependency_name->str_len_, dependency_name->str_value_));
-            if (dependency == nullptr) {
-              ret = OB_ERR_BAD_FIELD_ERROR;
-              LOG_USER_ERROR(OB_ERR_BAD_FIELD_ERROR, dependency_name->str_len_, dependency_name->str_value_,
-                             static_cast<int>(sizeof("AI COLUMN") - 1), "AI COLUMN");
-            } else if (!dependency->get_ai_column_expression().empty() || dependency->is_hidden()) {
-              ret = OB_NOT_SUPPORTED;
-              LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN dependency on an AI or hidden column");
-            } else {
-              bool present = false;
-              for (int64_t d = 0; !present && d < dependencies.count(); ++d) {
-                present = dependencies.at(d) == dependency->get_column_id();
-              }
-              if (!present) {
-                OZ (dependencies.push_back(dependency->get_column_id()));
-              }
-            }
-          } else {
-            for (int64_t c = 0; OB_SUCC(ret) && c < expr.num_child_; ++c) {
-              if (expr.children_[c] != nullptr) {
-                OZ (pending.push_back(expr.children_[c]));
-              }
-            }
-          }
-        }
-        ObSqlString ids;
-        OZ (ids.append("["));
-        for (int64_t d = 0; OB_SUCC(ret) && d < dependencies.count(); ++d) {
-          OZ (ids.append_fmt(d == 0 ? "%llu" : ",%llu", static_cast<unsigned long long>(dependencies.at(d))));
-        }
-        OZ (ids.append("]"));
-        OZ (result->set_ai_column_dependencies(ids.string()));
+        OZ (bind_ai_column_dependencies(*element->children_[4], table_schema, *result));
         const uint64_t result_id = result->get_column_id();
         for (int64_t slot = 0; OB_SUCC(ret) && slot < 3; ++slot) {
           ObColumnSchemaV2 companion;

@@ -879,6 +879,10 @@ int ObTableSqlService::revise_check_cst_column_info(
   return ret;
 }
 
+namespace {
+int insert_ai_column_rule(ObISQLClient &sql_client, const ObTableSchema &table, const ObColumnSchemaV2 &column);
+}
+
 int ObTableSqlService::insert_single_column(
     ObISQLClient &sql_client,
     const ObTableSchema &new_table_schema,
@@ -888,6 +892,8 @@ int ObTableSqlService::insert_single_column(
   int ret = OB_SUCCESS;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
   } else if (OB_FAIL(add_single_column(sql_client, new_column_schema))) {
+  } else if (!new_column_schema.get_ai_column_expression().empty() &&
+             OB_FAIL(insert_ai_column_rule(sql_client, new_table_schema, new_column_schema))) {
   }
   if (OB_SUCC(ret)) {
     if (new_column_schema.is_autoincrement()) {
@@ -1117,44 +1123,50 @@ int ObTableSqlService::add_columns_dml(
 
 namespace {
 
+int insert_ai_column_rule(ObISQLClient &sql_client, const ObTableSchema &table, const ObColumnSchemaV2 &column)
+{
+  int ret = OB_SUCCESS;
+  uint64_t companion_ids[3] = {};
+  for (int64_t slot = 0; OB_SUCC(ret) && slot < 3; ++slot) {
+    char name[64];
+    OZ (ObColumnSchemaV2::ai_column_companion_name(name, sizeof(name), column.get_column_id(), slot));
+    if (OB_SUCC(ret)) {
+      const auto *companion = table.get_column_schema(ObString::make_string(name));
+      if (companion == nullptr || !companion->is_hidden()) {
+        ret = OB_ERR_UNEXPECTED;
+      } else {
+        companion_ids[slot] = companion->get_column_id();
+      }
+    }
+  }
+  ObDMLSqlSplicer dml;
+  ObSqlString sql;
+  int64_t affected_rows = 0;
+  OZ (dml.add_pk_column("table_id", table.get_table_id()));
+  OZ (dml.add_pk_column("column_id", column.get_column_id()));
+  OZ (dml.add_column("column_name", ObHexEscapeSqlStr(column.get_column_name_str())));
+  OZ (dml.add_column("normalized_expr", ObHexEscapeSqlStr(column.get_ai_column_expression())));
+  OZ (dml.add_column("state_column_id", companion_ids[0]));
+  OZ (dml.add_column("request_column_id", companion_ids[1]));
+  OZ (dml.add_column("result_spec_column_id", companion_ids[2]));
+  OZ (dml.add_column("max_retries", column.get_ai_column_max_retries()));
+  OZ (dml.add_column("definition_version", column.get_schema_version() > 0 ? column.get_schema_version() : table.get_schema_version()));
+  OZ (dml.add_column("dependency_ids", ObHexEscapeSqlStr(column.get_ai_column_dependencies())));
+  OZ (dml.splice_insert_sql(OB_ALL_AI_COLUMN_TNAME, sql));
+  OZ (sql_client.write(sql.ptr(), affected_rows));
+  if (OB_SUCC(ret) && affected_rows != 1) {
+    ret = OB_ERR_UNEXPECTED;
+  }
+  return ret;
+}
+
 int insert_ai_column_rules(ObISQLClient &sql_client, const ObTableSchema &table)
 {
   int ret = OB_SUCCESS;
   for (auto iter = table.column_begin(); OB_SUCC(ret) && iter != table.column_end(); ++iter) {
-    const ObColumnSchemaV2 *column = *iter;
-    if (column == nullptr || column->get_ai_column_expression().empty()) {
-      continue;
-    }
-    uint64_t companion_ids[3] = {};
-    for (int64_t slot = 0; OB_SUCC(ret) && slot < 3; ++slot) {
-      char name[64];
-      OZ (ObColumnSchemaV2::ai_column_companion_name(name, sizeof(name), column->get_column_id(), slot));
-      if (OB_SUCC(ret)) {
-        const auto *companion = table.get_column_schema(ObString::make_string(name));
-        if (companion == nullptr || !companion->is_hidden()) {
-          ret = OB_ERR_UNEXPECTED;
-        } else {
-          companion_ids[slot] = companion->get_column_id();
-        }
-      }
-    }
-    ObDMLSqlSplicer dml;
-    ObSqlString sql;
-    int64_t affected_rows = 0;
-    OZ (dml.add_pk_column("table_id", table.get_table_id()));
-    OZ (dml.add_pk_column("column_id", column->get_column_id()));
-    OZ (dml.add_column("column_name", ObHexEscapeSqlStr(column->get_column_name_str())));
-    OZ (dml.add_column("normalized_expr", ObHexEscapeSqlStr(column->get_ai_column_expression())));
-    OZ (dml.add_column("state_column_id", companion_ids[0]));
-    OZ (dml.add_column("request_column_id", companion_ids[1]));
-    OZ (dml.add_column("result_spec_column_id", companion_ids[2]));
-    OZ (dml.add_column("max_retries", column->get_ai_column_max_retries()));
-    OZ (dml.add_column("definition_version", table.get_schema_version()));
-    OZ (dml.add_column("dependency_ids", ObHexEscapeSqlStr(column->get_ai_column_dependencies())));
-    OZ (dml.splice_insert_sql(OB_ALL_AI_COLUMN_TNAME, sql));
-    OZ (sql_client.write(sql.ptr(), affected_rows));
-    if (OB_SUCC(ret) && affected_rows != 1) {
-      ret = OB_ERR_UNEXPECTED;
+    const auto *column = *iter;
+    if (column != nullptr && !column->get_ai_column_expression().empty()) {
+      OZ (insert_ai_column_rule(sql_client, table, *column));
     }
   }
   return ret;

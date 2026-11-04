@@ -7824,7 +7824,28 @@ int ObDDLService::add_new_column_to_table_schema(
       ret = OB_ERR_UNEXPECTED;
     } else {
       alter_column_schema.set_prev_column_id(mem_col->get_prev_column_id());
-      if (update_inner_table) {
+      if (!alter_column_schema.get_ai_column_expression().empty()) {
+        for (int64_t slot = 0; OB_SUCC(ret) && slot < 3; ++slot) {
+          AlterColumnSchema companion;
+          char name[64];
+          OZ (ObColumnSchemaV2::ai_column_companion_name(
+              name, sizeof(name), alter_column_schema.get_column_id(), slot));
+          OX (companion.alter_type_ = OB_DDL_ADD_COLUMN);
+          OX (companion.set_is_hidden(true));
+          OX (companion.set_nullable(true));
+          OX (companion.set_data_type(slot == 0 ? ObIntType : ObVarcharType));
+          OX (companion.set_charset_type(slot == 0 ? CHARSET_BINARY : CHARSET_UTF8MB4));
+          OX (companion.set_collation_type(slot == 0 ? CS_TYPE_BINARY : CS_TYPE_UTF8MB4_BIN));
+          if (slot != 0) {
+            OX (companion.set_data_length(slot == 1 ? 64 : 2048));
+          }
+          OZ (companion.set_column_name(name));
+          OZ (add_new_column_to_table_schema(origin_table_schema, alter_table_schema, tz_info_wrap,
+                local_session_var, allocator, new_table_schema, companion, gen_col_expr_arr, schema_guard,
+                curr_udt_set_id, ddl_operator, trans));
+        }
+      }
+      if (OB_SUCC(ret) && update_inner_table) {
         if (OB_FAIL(ddl_operator->insert_single_column(*trans,
                 new_table_schema, alter_column_schema))) {
         }

@@ -509,6 +509,10 @@ protected:
       bool is_resolve_for_alter_table);
   int resolve_column_name(common::ObString &col_name, ParseNode *node);
   int resolve_column_name(share::schema::ObColumnSchemaV2 &column, ParseNode *node);
+  static bool has_ai_column_companions(const share::schema::ObTableSchema &table,
+                                       const share::schema::ObColumnSchemaV2 &column);
+  static int bind_ai_column_dependencies(const ParseNode &expression, const share::schema::ObTableSchema &table,
+                                         share::schema::ObColumnSchemaV2 &column);
   int resolve_column_definition(
       share::schema::ObColumnSchemaV2 &column,
       ParseNode *node,
