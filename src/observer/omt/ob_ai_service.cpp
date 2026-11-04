@@ -25,6 +25,7 @@
 #include "sql/privilege_check/ob_ai_model_priv_util.h"
 #include "sql/session/ob_sql_session_info.h"
 #include "sql/engine/ob_exec_context.h"
+#include "sql/engine/expr/ob_expr_ai/ob_expr_ai_complete.h"
 
 using namespace oceanbase::share;
 using namespace oceanbase::common;
@@ -81,7 +82,8 @@ int append_identifier(ObSqlString &sql, const ObString &name)
 }
 
 int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
-                         const ObString &table, const ObAiColumnWork &task, ObString &value)
+                         const ObString &table, const ObAiColumnWork &task,
+                         const ObObjMeta &result_type, ObString &value)
 {
   int ret = OB_SUCCESS;
   rapidjson::Document rule;
@@ -92,7 +94,13 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
     ret = OB_ERR_UNEXPECTED;
   } else {
     const auto &expr = rule["expression"];
-    OZ (sql.append("SELECT CAST(("));
+    ObString system_prompt;
+    if (rule.HasMember("system_prompt") && rule["system_prompt"].IsString()) {
+      const auto &prompt = rule["system_prompt"];
+      system_prompt.assign_ptr(prompt.GetString(), prompt.GetStringLength());
+    }
+    sql::ObExprAIComplete::SystemPromptGuard prompt_guard(system_prompt);
+    OZ (sql.append("SELECT /*+ parallel(1) */ CAST(("));
     OZ (sql.append(expr.GetString(), expr.GetStringLength()));
     OZ (sql.append_fmt(") AS CHAR) AS ai_value FROM %.*s WHERE %.*s",
                        table.length(), table.ptr(), task.predicate_.length(), task.predicate_.ptr()));
@@ -103,6 +111,16 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
     OZ (row->next());
     ObString text;
     OZ (row->get_varchar("ai_value", text));
+    if (OB_SUCC(ret) && (result_type.is_json() || result_type.is_numeric_type() ||
+                        ob_is_decimal_int(result_type.get_type()))) {
+      rapidjson::Document typed;
+      typed.Parse(text.ptr(), text.length());
+      if (typed.HasParseError() ||
+          (result_type.is_integer_type() && !typed.IsInt64() && !typed.IsUint64()) ||
+          (!result_type.is_json() && !typed.IsNumber())) {
+        ret = OB_INVALID_DATA;
+      }
+    }
     OZ (ob_write_string(allocator, text, value));
   }
   return ret;
@@ -134,7 +152,7 @@ int execute_ai_column_group(ObISQLClient &proxy, ObArenaAllocator &allocator, co
     const auto *column = table->get_column_schema(task.column_id_);
     ObString value;
     CK (OB_NOT_NULL(column), column->is_ai_result_column());
-    OZ (read_ai_column_value(proxy, allocator, qualified.string(), task, value));
+    OZ (read_ai_column_value(proxy, allocator, qualified.string(), task, column->get_meta_type(), value));
     if (i != 0) {
       OZ (writeback.append(", "));
     }

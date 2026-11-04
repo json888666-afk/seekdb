@@ -82,6 +82,21 @@ int ObExprAIComplete::calc_result_typeN(ObExprResType &type,
   return ret;
 }
 
+namespace {
+thread_local ObString ai_column_system_prompt;
+}
+
+ObExprAIComplete::SystemPromptGuard::SystemPromptGuard(const ObString &prompt)
+  : previous_(ai_column_system_prompt)
+{
+  ai_column_system_prompt = prompt;
+}
+
+ObExprAIComplete::SystemPromptGuard::~SystemPromptGuard()
+{
+  ai_column_system_prompt = previous_;
+}
+
 int ObExprAIComplete::eval_ai_complete(const ObExpr &expr, 
                                        ObEvalCtx &ctx,
                                        ObDatum &res) 
@@ -161,7 +176,7 @@ int ObExprAIComplete::eval_ai_complete(const ObExpr &expr,
     } else {
       ObAIFuncModel model(temp_allocator, *info, *endpoint_info);
       ObString result;
-      if (OB_FAIL(model.call_completion(prompt, config, result))) {
+      if (OB_FAIL(model.call_completion(prompt, config, result, ai_column_system_prompt))) {
       } else if (OB_FAIL(ObAIFuncUtils::set_string_result(expr, ctx, res, result))) {
       }
     }
