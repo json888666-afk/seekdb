@@ -2130,25 +2130,18 @@ int ObDMLService::get_nested_delete_ctx(const uint64_t table_id,
 
 namespace {
 
-int build_ai_rowkey_predicate(ObTableModifyOp &op,
-                              const uint64_t table_id,
+int build_ai_rowkey_predicate(const schema::ObTableSchema &table,
                               const ObIArray<ObObj> &cells,
+                              const ObObjPrintParams &print_params,
                               ObIAllocator &allocator,
                               ObSqlString &predicate)
 {
   int ret = OB_SUCCESS;
-  ObSQLSessionInfo *session = op.get_exec_ctx().get_my_session();
-  schema::ObSchemaGetterGuard guard;
-  const schema::ObTableSchema *table = nullptr;
-  CK (OB_NOT_NULL(session), OB_NOT_NULL(GCTX.schema_service_));
-  OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
-  OZ (guard.get_table_schema(table_id, table));
-  CK (OB_NOT_NULL(table));
   for (int64_t i = 0; OB_SUCC(ret) && i < cells.count(); ++i) {
     uint64_t column_id = OB_INVALID_ID;
     const schema::ObColumnSchemaV2 *column = nullptr;
-    OZ (table->get_rowkey_info().get_column_id(i, column_id));
-    OX (column = table->get_column_schema(column_id));
+    OZ (table.get_rowkey_info().get_column_id(i, column_id));
+    OX (column = table.get_column_schema(column_id));
     CK (OB_NOT_NULL(column));
     if (OB_SUCC(ret)) {
       const ObString &name = column->get_column_name_str();
@@ -2165,8 +2158,47 @@ int build_ai_rowkey_predicate(ObTableModifyOp &op,
       char *literal = static_cast<char *>(allocator.alloc(length));
       CK (OB_NOT_NULL(literal));
       OZ (cells.at(i).print_sql_literal(literal, length, pos, allocator,
-                                      session->create_obj_print_params()));
+                                      print_params));
       OZ (predicate.append(literal, pos));
+    }
+  }
+  return ret;
+}
+
+int collect_ai_rowkey(ObTableModifyOp &op,
+                      const ObDMLBaseCtDef &dml,
+                      const ObRowkeyInfo &rowkey,
+                      const bool use_new_row,
+                      ObIArray<ObObj> &key_cells)
+{
+  int ret = OB_SUCCESS;
+  const auto &das = dml.das_base_ctdef_;
+  const auto &projector = use_new_row ? das.new_row_projector_ : das.old_row_projector_;
+  const auto &exprs = das.op_type_ == DAS_OP_TABLE_UPDATE ? dml.full_row_ :
+                      use_new_row ? dml.new_row_ : dml.old_row_;
+  CK (rowkey.get_size() > 0);
+  for (int64_t i = 0; OB_SUCC(ret) && i < rowkey.get_size(); ++i) {
+    uint64_t column_id = OB_INVALID_ID;
+    int64_t storage_index = OB_INVALID_INDEX;
+    OZ (rowkey.get_column_id(i, column_id));
+    CK (has_exist_in_array(das.column_ids_, column_id, &storage_index));
+    if (OB_SUCC(ret) && (storage_index < 0 || storage_index >= projector.count())) {
+      ret = OB_ERR_UNEXPECTED;
+    }
+    if (OB_FAIL(ret)) {
+      break;
+    }
+    const int64_t index = projector.at(storage_index);
+    if (index < 0 || index >= exprs.count() || exprs.at(index) == nullptr) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      ObDatum *datum = nullptr;
+      ObObj key_cell;
+      const ObExpr &expr = *exprs.at(index);
+      OZ (expr.eval(op.get_eval_ctx(), datum));
+      CK (OB_NOT_NULL(datum));
+      OZ (datum->to_obj(key_cell, expr.obj_meta_, expr.obj_datum_map_));
+      OZ (key_cells.push_back(key_cell));
     }
   }
   return ret;
@@ -2182,27 +2214,15 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
   }
 
   const bool inserting = event == ObDmlEventType::DE_INSERTING;
-  const auto &projector = inserting ? das.new_row_projector_ : das.old_row_projector_;
-  const auto &exprs = inserting ? dml.new_row_ : dml.old_row_;
+  ObSQLSessionInfo *session = op.get_exec_ctx().get_my_session();
+  schema::ObSchemaGetterGuard guard;
+  const schema::ObTableSchema *table = nullptr;
   ObSEArray<ObObj, 8> key_cells;
-  if (das.rowkey_cnt_ <= 0 || das.rowkey_cnt_ > projector.count()) {
-    ret = OB_ERR_UNEXPECTED;
-  }
-  for (int64_t i = 0; OB_SUCC(ret) && i < das.rowkey_cnt_; ++i) {
-    const int64_t index = projector.at(i);
-    if (index < 0 || index >= exprs.count() || exprs.at(index) == nullptr) {
-      ret = OB_ERR_UNEXPECTED;
-    } else {
-      ObDatum *datum = nullptr;
-      ObObj key_cell;
-      const ObExpr &expr = *exprs.at(index);
-      OZ (expr.eval(op.get_eval_ctx(), datum));
-      CK (OB_NOT_NULL(datum));
-      OZ (datum->to_obj(key_cell, expr.obj_meta_, expr.obj_datum_map_));
-      OZ (key_cells.push_back(key_cell));
-    }
-  }
-
+  CK (OB_NOT_NULL(session), OB_NOT_NULL(GCTX.schema_service_));
+  OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
+  OZ (guard.get_table_schema(das.index_tid_, table));
+  CK (OB_NOT_NULL(table));
+  OZ (collect_ai_rowkey(op, dml, table->get_rowkey_info(), inserting, key_cells));
   ObSqlString sql;
   ObRowkey row_key;
   if (OB_SUCC(ret)) {
@@ -2219,7 +2239,8 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
       } else if (OB_FAIL(row_key.serialize(data, size, pos))) {
       } else if (inserting) {
         ObSqlString predicate;
-        OZ (build_ai_rowkey_predicate(op, das.table_id_, key_cells, key_allocator, predicate));
+        OZ (build_ai_rowkey_predicate(*table, key_cells, session->create_obj_print_params(),
+                                      key_allocator, predicate));
         char request[UuidCommon::LENGTH_UUID + 1] = {};
         OZ (ObExprUuid::gen_server_uuid(request, UuidCommon::LENGTH_UUID));
         OZ (sql.append_fmt("INSERT INTO oceanbase.%s "
@@ -2229,10 +2250,10 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
         OZ (sql.append(", "));
         OZ (sql_append_hex_escape_str(predicate.string(), sql));
         OZ (sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s WHERE table_id=%llu",
-            OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.table_id_)));
+            OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.index_tid_)));
       } else {
         OZ (sql.append_fmt("DELETE FROM oceanbase.%s WHERE table_id=%llu AND row_key=",
-            OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(das.table_id_)));
+            OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(das.index_tid_)));
         OZ (sql_append_hex_escape_str(ObString(pos, data), sql));
       }
     }
