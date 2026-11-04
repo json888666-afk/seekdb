@@ -1815,7 +1815,8 @@ int check_ai_column_input(const ParseNode &expr)
   return ret;
 }
 
-int store_ai_column_definition(const share::AiColumnRule &rule, ObColumnSchemaV2 &column)
+int store_ai_column_definition(const share::AiColumnRule &rule, ObSQLMode sql_mode,
+                               ObColumnSchemaV2 &column)
 {
   int ret = OB_SUCCESS;
   const char *prompt = "";
@@ -1837,6 +1838,7 @@ int store_ai_column_definition(const share::AiColumnRule &rule, ObColumnSchemaV2
   rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
   if (!writer.StartObject() ||
       !writer.Key("format_version") || !writer.Int(1) ||
+      !writer.Key("sql_mode") || !writer.Uint64(sql_mode) ||
       !writer.Key("expression") ||
       !writer.String(rule.normalized_expression.data(), rule.normalized_expression.size()) ||
       !writer.Key("system_prompt") || !writer.String(prompt) ||
@@ -1853,7 +1855,8 @@ int store_ai_column_definition(const share::AiColumnRule &rule, ObColumnSchemaV2
   return ret;
 }
 
-int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &column)
+int validate_ai_column_definition(const ParseNode &node, ObSQLMode sql_mode,
+                                  ObColumnSchemaV2 &column)
 {
   int ret = OB_SUCCESS;
   share::AiColumnRule rule;
@@ -1946,7 +1949,7 @@ int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &colum
     } else if (error != share::AiColumnRuleError::OK) {
       ret = OB_NOT_SUPPORTED;
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN definition");
-    } else if (OB_FAIL(store_ai_column_definition(rule, column))) {
+    } else if (OB_FAIL(store_ai_column_definition(rule, sql_mode, column))) {
     }
   }
   return ret;
@@ -2123,7 +2126,7 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
     }
   }
   if (OB_SUCC(ret) && AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
-    if (OB_FAIL(validate_ai_column_definition(*node, column))) {
+    if (OB_FAIL(validate_ai_column_definition(*node, session_info_->get_sql_mode(), column))) {
     } else if ((stmt::T_CREATE_TABLE != stmt_->get_stmt_type() &&
                 (stmt::T_ALTER_TABLE != stmt_->get_stmt_type() ||
                  OB_DDL_ADD_COLUMN != static_cast<AlterColumnSchema &>(column).alter_type_)) || is_create_table_as) {

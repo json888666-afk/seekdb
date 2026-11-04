@@ -83,7 +83,7 @@ int append_identifier(ObSqlString &sql, const ObString &name)
   return ret;
 }
 
-int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
+int read_ai_column_value(ObMySQLProxy &proxy, ObIAllocator &allocator,
                          const ObString &table, const ObAiColumnWork &task,
                          const ObObjMeta &result_type, ObString &value)
 {
@@ -112,7 +112,13 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
     OZ (sql.append_fmt(") AS CHAR) AS ai_value FROM %.*s WHERE %.*s",
                        table.length(), table.ptr(), task.predicate_.length(), task.predicate_.ptr()));
     ObISQLClient::ReadResult result;
-    OZ (proxy.read(result, sql.ptr()));
+    ObSessionParam session_param;
+    int64_t sql_mode = 0;
+    if (rule.HasMember("sql_mode") && rule["sql_mode"].IsUint64()) {
+      sql_mode = static_cast<int64_t>(rule["sql_mode"].GetUint64());
+      session_param.sql_mode_ = &sql_mode;
+    }
+    OZ (proxy.read(result, sql.ptr(), &session_param));
     auto *row = result.get_result();
     CK (OB_NOT_NULL(row));
     OZ (row->next());
@@ -147,7 +153,7 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
   return ret;
 }
 
-int execute_ai_column_group(ObISQLClient &proxy, ObArenaAllocator &allocator, const ObAiColumnLease &lease)
+int execute_ai_column_group(ObMySQLProxy &proxy, ObArenaAllocator &allocator, const ObAiColumnLease &lease)
 {
   int ret = OB_SUCCESS;
   ObSEArray<ObAiColumnWork, 8> tasks;
