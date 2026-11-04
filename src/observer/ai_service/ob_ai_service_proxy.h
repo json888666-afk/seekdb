@@ -42,7 +42,7 @@ struct ObAiColumnLease
   int64_t task_count_ = 0;
 };
 
-enum class ObAiColumnState : int64_t { PENDING = 0, READY = 1, FAILED = 2 };
+enum class ObAiColumnState : int64_t { PENDING = 0, READY = 1, FAILED = 2, RETRY_WAIT = 3 };
 
 struct ObAiColumnWork
 {

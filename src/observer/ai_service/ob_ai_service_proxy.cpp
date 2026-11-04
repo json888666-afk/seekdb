@@ -186,7 +186,7 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     OZ (ob_write_string(allocator, predicate, task.predicate_));
     EXTRACT_INT_FIELD_MYSQL(*row, "state", state, int64_t);
     EXTRACT_VARCHAR_FIELD_MYSQL(*row, "result_text", value);
-    CK (state >= 0 && state <= static_cast<int64_t>(ObAiColumnState::FAILED));
+    CK (state >= 0 && state <= static_cast<int64_t>(ObAiColumnState::RETRY_WAIT));
     OX (task.state_ = static_cast<ObAiColumnState>(state));
     OZ (ob_write_string(allocator, rule, task.rule_));
     OZ (ob_write_string(allocator, value, task.result_));
@@ -241,7 +241,7 @@ int ObAiServiceProxy::save_ai_column_result(ObISQLClient &sql_proxy,
     OZ (sql.append("NULL"));
   }
   OZ (append_active_ai_lease(sql, lease));
-  OZ (sql.append_fmt(" AND state=0 AND column_id=%llu", static_cast<unsigned long long>(column_id)));
+  OZ (sql.append_fmt(" AND state IN (0,3) AND column_id=%llu", static_cast<unsigned long long>(column_id)));
   OZ (sql_proxy.write(sql.ptr(), affected));
   if (OB_SUCC(ret) && affected != 1) {
     ret = OB_EAGAIN;
@@ -257,9 +257,12 @@ int ObAiServiceProxy::retry_ai_column_request(ObISQLClient &sql_proxy,
   ObMySQLTransaction trans;
   ObSqlString sql;
   OZ (sql.append_fmt("UPDATE oceanbase.%s SET retry_count=retry_count+(column_id=%llu), "
+                     "state=IF(column_id=%llu,%lld,state), "
                      "eligible_ts=TIMESTAMPADD(MICROSECOND,500000,NOW(6)), "
                      "lease_token=NULL,lease_expiry=NULL",
-                     OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(failed_column)));
+                     OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(failed_column),
+                     static_cast<unsigned long long>(failed_column),
+                     static_cast<long long>(ObAiColumnState::RETRY_WAIT)));
   OZ (append_active_ai_lease(sql, lease));
   OZ (trans.start(&sql_proxy));
   OZ (trans.write(sql.ptr(), affected));

@@ -180,7 +180,7 @@ int execute_ai_column_group(ObMySQLProxy &proxy, ObArenaAllocator &allocator, co
     ObString value = task.result_;
     ObAiColumnState state = task.state_;
     CK (OB_NOT_NULL(column), column->is_ai_result_column());
-    if (OB_SUCC(ret) && state == ObAiColumnState::PENDING) {
+    if (OB_SUCC(ret) && (state == ObAiColumnState::PENDING || state == ObAiColumnState::RETRY_WAIT)) {
       const int model_ret = read_ai_column_value(proxy, allocator, qualified.string(),
                                                   task, column->get_meta_type(), value);
       if (model_ret == OB_ITER_END) {
