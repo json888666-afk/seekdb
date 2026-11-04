@@ -30,6 +30,8 @@ namespace file_sql {
 
 int open_local_csv(ObSQLSessionInfo &session, const common::ObString &path,
                    std::unique_ptr<std::istream> &input);
+int open_local_glob(ObSQLSessionInfo &session, const common::ObString &pattern,
+                    std::unique_ptr<std::istream> &input, bool validate_only = false);
 
 struct CsvCell
 {

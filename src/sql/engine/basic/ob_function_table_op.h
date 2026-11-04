@@ -42,6 +42,7 @@ public:
   int64_t file_sql_column_count_ = 0;
   bool file_sql_csv_header_ = true;
   bool file_sql_json_lines_ = false;
+  bool file_sql_glob_ = false;
   bool has_correlated_expr_;
 };
 

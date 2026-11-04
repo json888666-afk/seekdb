@@ -32,6 +32,7 @@
 #include <stdexcept>
 #ifdef __linux__
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -45,7 +46,7 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_);
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_);
 
 #ifdef __linux__
 namespace {
@@ -179,6 +180,95 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
   return ret;
 }
 
+int file_sql::open_local_glob(ObSQLSessionInfo &session, const ObString &pattern,
+                              std::unique_ptr<std::istream> &input, bool validate_only)
+{
+  int ret = OB_SUCCESS;
+  bool enabled = false;
+  input.reset();
+  if (OB_FAIL(session.get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL while enable_file_sql is OFF");
+  } else if (0 == (session.get_user_priv_set() & OB_PRIV_FILE)) {
+    ret = OB_ERR_NO_PRIVILEGE;
+  } else {
+#ifdef __linux__
+    ObString secure_dir;
+    if (OB_FAIL(session.get_secure_file_priv(secure_dir))) {
+    } else if (secure_dir.empty() || 0 == secure_dir.case_compare("NULL")) {
+      ret = OB_ERR_NO_PRIVILEGE;
+    } else if (pattern.empty()) {
+      ret = OB_INVALID_ARGUMENT;
+    } else {
+      try {
+        namespace fs = std::filesystem;
+        const std::string text(pattern.ptr(), pattern.length());
+        const std::string directory(secure_dir.ptr(), secure_dir.length());
+        const fs::path path(text);
+        const fs::path parent = path.has_parent_path() ? path.parent_path() : fs::path(".");
+        const std::string leaf = path.filename().string();
+        std::error_code ec;
+        if (text.find('\0') != std::string::npos || text.find("://") != std::string::npos ||
+            directory.find('\0') != std::string::npos || leaf.empty()) {
+          ret = OB_INVALID_ARGUMENT;
+        } else if (parent.string().find_first_of("*?[") != std::string::npos) {
+          ret = OB_NOT_SUPPORTED;
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL glob wildcards in directory names");
+        } else {
+          const fs::path root = fs::canonical(directory, ec);
+          FileSqlDescriptor dir(::open(parent.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC));
+          if (ec || dir.fd_ < 0) {
+            ret = OB_ERR_NO_PRIVILEGE;
+          } else {
+            const std::string proc = "/proc/self/fd/" + std::to_string(dir.fd_);
+            const fs::path resolved = fs::canonical(proc, ec);
+            if (ec || (resolved != root && !file_is_within(root, resolved))) {
+              ret = OB_ERR_NO_PRIVILEGE;
+            } else if (!validate_only) {
+              std::ostringstream rows;
+              for (const auto &entry : fs::directory_iterator(proc)) {
+                const std::string name = entry.path().filename().string();
+                if (0 != ::fnmatch(leaf.c_str(), name.c_str(), FNM_PERIOD)) {
+                  continue;
+                }
+                FileSqlDescriptor file(::openat(dir.fd_, name.c_str(), O_PATH | O_CLOEXEC));
+                struct stat st {};
+                if (file.fd_ < 0 || ::fstat(file.fd_, &st) != 0 || !S_ISREG(st.st_mode)) {
+                  continue;
+                }
+                const fs::path target = fs::canonical("/proc/self/fd/" + std::to_string(file.fd_), ec);
+                if (ec || !file_is_within(root, target)) {
+                  continue;
+                }
+                rows << '"';
+                for (char ch : (resolved / name).string()) {
+                  if (ch == '"') {
+                    rows << '"';
+                  }
+                  rows << ch;
+                }
+                rows << "\"\n";
+              }
+              input = std::make_unique<std::istringstream>(rows.str());
+            }
+          }
+        }
+      } catch (const std::exception &e) {
+        ret = OB_INVALID_ARGUMENT;
+        LOG_WARN("could not list FileSQL glob matches", K(ret), "reason", e.what());
+      }
+    }
+#else
+    UNUSED(pattern);
+    UNUSED(validate_only);
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
+#endif
+  }
+  return ret;
+}
+
 int ObFunctionTableOp::open_csv()
 {
   int ret = OB_SUCCESS;
@@ -191,6 +281,8 @@ int ObFunctionTableOp::open_csv()
   } else if (OB_FAIL(MY_SPEC.value_expr_->eval(eval_ctx_, value))) {
   } else if (value->is_null()) {
     ret = OB_INVALID_ARGUMENT;
+  } else if (MY_SPEC.file_sql_glob_) {
+    ret = file_sql::open_local_glob(*session, value->get_string(), csv_input_);
   } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_))) {
   } else if (MY_SPEC.file_sql_csv_header_) {
     try {

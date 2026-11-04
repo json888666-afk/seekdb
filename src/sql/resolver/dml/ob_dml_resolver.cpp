@@ -3939,6 +3939,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
   ObDMLStmt *stmt = get_stmt();
   bool header = true;
   bool json_lines = false;
+  bool glob = false;
   ObString path;
   std::unique_ptr<std::istream> stream;
   std::vector<file_sql::CsvColumn> columns;
@@ -3950,13 +3951,18 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
     if (OB_ISNULL(name) || OB_ISNULL(args) || args->num_child_ < 1) {
       ret = OB_ERR_PARSER_SYNTAX;
     } else if (0 != ObString(name->str_len_, name->str_value_).case_compare("read_csv") &&
-               0 != ObString(name->str_len_, name->str_value_).case_compare("read_json")) {
+               0 != ObString(name->str_len_, name->str_value_).case_compare("read_json") &&
+               0 != ObString(name->str_len_, name->str_value_).case_compare("glob")) {
       ret = OB_NOT_SUPPORTED;
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "this table function");
     } else if (OB_ISNULL(args->children_[0]) || T_VARCHAR != args->children_[0]->type_) {
       ret = OB_ERR_PARSER_SYNTAX;
     } else {
       json_lines = 0 == ObString(name->str_len_, name->str_value_).case_compare("read_json");
+      glob = 0 == ObString(name->str_len_, name->str_value_).case_compare("glob");
+      if (glob && args->num_child_ != 1) {
+        ret = OB_INVALID_ARGUMENT;
+      }
       path.assign_ptr(args->children_[0]->str_value_, args->children_[0]->str_len_);
       bool seen_header = false;
       bool seen_sample = false;
@@ -3997,8 +4003,16 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       }
     }
   }
-  OZ (file_sql::open_local_csv(*session_info_, path, stream));
-  if (OB_SUCC(ret)) {
+  if (OB_SUCC(ret) && glob) {
+    OZ (file_sql::open_local_glob(*session_info_, path, stream, true));
+    if (OB_SUCC(ret)) {
+      columns.push_back({"file", file_sql::CsvType::VARCHAR, false});
+      header = false;
+    }
+  } else {
+    OZ (file_sql::open_local_csv(*session_info_, path, stream));
+  }
+  if (OB_SUCC(ret) && !glob) {
     try {
       columns = json_lines ? file_sql::infer_json_lines_schema(*stream) : file_sql::infer_csv_schema(*stream, header);
       if (columns.empty()) {
@@ -4033,6 +4047,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       item->file_sql_column_count_ = columns.size();
       item->file_sql_csv_header_ = header;
       item->file_sql_json_lines_ = json_lines;
+      item->file_sql_glob_ = glob;
       OZ (stmt->add_table_item(session_info_, item));
       for (size_t i = 0; OB_SUCC(ret) && i < columns.size(); ++i) {
         ObObjMeta meta;
