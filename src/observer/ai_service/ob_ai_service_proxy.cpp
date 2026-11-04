@@ -162,6 +162,58 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
   return ret;
 }
 
+int ObAiServiceProxy::publish_ai_column_request(ObISQLClient &sql_proxy,
+                                                  const ObAiColumnLease &lease,
+                                                  const ObString &writeback_sql)
+{
+  int ret = OB_SUCCESS;
+  ObMySQLTransaction trans;
+  ObSqlString writeback;
+  ObSqlString remove;
+  if (lease.table_id_ == OB_INVALID_ID || lease.request_id_.empty() ||
+      lease.token_.empty() || lease.task_count_ <= 0 || writeback_sql.empty()) {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  OZ (writeback.append(writeback_sql));
+  OZ (remove.append_fmt("DELETE t FROM oceanbase.%s t JOIN oceanbase.%s a "
+      "ON a.table_id=t.table_id AND a.column_id=t.column_id "
+      "AND a.definition_version=t.definition_version "
+      "WHERE t.table_id=%llu AND t.lease_expiry > NOW(6) AND t.request_id=",
+      OB_ALL_AI_COLUMN_TASK_TNAME, OB_ALL_AI_COLUMN_TNAME,
+      static_cast<unsigned long long>(lease.table_id_)));
+  OZ (sql_append_hex_escape_str(lease.request_id_, remove));
+  OZ (remove.append(" AND t.lease_token="));
+  OZ (sql_append_hex_escape_str(lease.token_, remove));
+  OZ (trans.start(&sql_proxy));
+  if (OB_SUCC(ret)) {
+    auto *connection = trans.get_connection();
+    CK (OB_NOT_NULL(connection));
+    ObSessionDDLInfo ddl_info;
+    ddl_info.set_ai_column_writeback(true);
+    int64_t affected = 0;
+    if (OB_FAIL(ret)) {
+    } else if (OB_FAIL(connection->set_ddl_info(&ddl_info))) {
+    } else {
+      // Acquire the business row before the tasks, as foreground DML does.
+      // If the lease was replaced meanwhile, roll back the business update.
+      ret = trans.write(writeback.ptr(), affected);
+      ddl_info.reset();
+      const int reset_ret = connection->set_ddl_info(&ddl_info);
+      if (OB_SUCC(ret)) {
+        ret = reset_ret;
+      }
+      if (OB_SUCC(ret) && affected != 1) {
+        ret = OB_EAGAIN;
+      }
+    }
+    OZ (trans.write(remove.ptr(), affected));
+    if (OB_SUCC(ret) && affected != lease.task_count_) {
+      ret = OB_EAGAIN;
+    }
+  }
+  return trans.handle_trans_in_the_end(ret);
+}
+
 int ObAiServiceProxy::insert_ai_endpoint(ObMySQLTransaction &trans, const int64_t new_endpoint_version, const ObAiModelEndpointInfo &endpoint)
 {
   int ret = OB_SUCCESS;
