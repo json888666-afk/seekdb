@@ -18,6 +18,15 @@
 
 #include <cmath>
 #include <memory>
+#ifdef __linux__
+#include <cerrno>
+#include <cstdio>
+#include <filesystem>
+#include <fcntl.h>
+#include <unistd.h>
+#include <vector>
+#endif
+#include "share/schema/ob_priv_type.h"
 
 #include "ob_select_into_op.h"
 #include "sql/engine/cmd/ob_variable_set_executor.h"
@@ -38,7 +47,7 @@ OB_SERIALIZE_MEMBER(ObSelectIntoOpInput, task_id_, sqc_id_);
 OB_SERIALIZE_MEMBER((ObSelectIntoSpec, ObOpSpec), into_type_, user_vars_, outfile_name_,
     field_str_, line_str_, closed_cht_, is_optional_, select_exprs_, is_single_, max_file_size_,
     escaped_cht_, cs_type_, parallel_, buffer_size_, is_overwrite_,
-    external_properties_);
+    external_properties_, file_sql_copy_names_, file_sql_copy_null_, file_sql_copy_);
 
 
 int ObSelectIntoOp::inner_open()
@@ -52,6 +61,9 @@ int ObSelectIntoOp::inner_open()
     opened_ = true;
     if (OB_FAIL(session->get_sql_select_limit(top_limit_cnt_))) {
     }
+  }
+  if (OB_SUCC(ret) && MY_SPEC.file_sql_copy_) {
+    return ret;
   }
   if (OB_SUCC(ret) && !MY_SPEC.external_properties_.str_.empty()) {
     if (OB_FAIL(external_properties_.load_from_string(MY_SPEC.external_properties_.str_,
@@ -186,8 +198,198 @@ int ObSelectIntoOp::calc_outfile_path()
   }
   return ret;
 }
+#ifdef __linux__
+namespace {
+
+bool write_file_sql_csv_field(FILE *file, const ObString &text, bool quote)
+{
+  if (quote && std::fputc('"', file) == EOF) {
+    return false;
+  }
+  for (int32_t i = 0; i < text.length(); ++i) {
+    if ((quote && text[i] == '"' && std::fputc('"', file) == EOF) ||
+        std::fputc(static_cast<unsigned char>(text[i]), file) == EOF) {
+      return false;
+    }
+  }
+  return !quote || std::fputc('"', file) != EOF;
+}
+
+struct FileSqlCopyPath
+{
+  ~FileSqlCopyPath()
+  {
+    if (!temporary.empty()) {
+      ::unlink(temporary.data());
+    }
+    if (directory >= 0) {
+      ::close(directory);
+    }
+  }
+  std::vector<char> temporary;
+  int directory = -1;
+};
+
+} // namespace
+#endif
+
+int ObSelectIntoOp::copy_file_sql_csv()
+{
+  int ret = OB_SUCCESS;
+#ifdef __linux__
+  if (!is_first_) {
+    return ret;
+  }
+  is_first_ = false;
+  auto *session = ctx_.get_my_session();
+  auto *plan = ctx_.get_physical_plan_ctx();
+  bool enabled = false;
+  ObString secure_dir;
+  if (OB_ISNULL(session) || OB_ISNULL(plan)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (OB_FAIL(session->get_sys_variable(share::SYS_VAR_ENABLE_FILE_SQL, enabled))) {
+  } else if (!enabled) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL while enable_file_sql is OFF");
+  } else if (0 == (session->get_user_priv_set() & OB_PRIV_FILE)) {
+    ret = OB_ERR_NO_PRIVILEGE;
+  } else if (OB_FAIL(session->get_secure_file_priv(secure_dir))) {
+  } else if (secure_dir.empty() || secure_dir.case_compare("NULL") == 0) {
+    ret = OB_ERR_NO_PRIVILEGE;
+  } else {
+    try {
+      namespace fs = std::filesystem;
+      const ObString outfile = MY_SPEC.outfile_name_.get_string();
+      const std::string name(outfile.ptr(), outfile.length());
+      const std::string secure(secure_dir.ptr(), secure_dir.length());
+      const fs::path path(name);
+      const std::string leaf = path.filename().string();
+      const fs::path parent = path.has_parent_path() ? path.parent_path() : fs::path(".");
+      FileSqlCopyPath paths;
+      std::error_code ec;
+      if (name.find('\0') != std::string::npos || name.find("://") != std::string::npos ||
+          secure.find('\0') != std::string::npos || leaf.empty() || leaf == "." || leaf == "..") {
+        ret = OB_INVALID_ARGUMENT;
+      } else {
+        const auto root = fs::canonical(secure, ec);
+        if (ec || (paths.directory = ::open(parent.c_str(), O_PATH | O_DIRECTORY | O_CLOEXEC)) < 0) {
+          ret = OB_ERR_NO_PRIVILEGE;
+        } else {
+          const std::string proc = "/proc/self/fd/" + std::to_string(paths.directory);
+          const auto directory = fs::canonical(proc, ec);
+          const auto relative = directory.lexically_relative(root);
+          if (ec || relative.empty() || *relative.begin() == "..") {
+            ret = OB_ERR_NO_PRIVILEGE;
+          } else {
+            const std::string temporary = proc + "/.seekdb-copy-XXXXXX";
+            paths.temporary.assign(temporary.begin(), temporary.end());
+            paths.temporary.push_back('\0');
+            const int fd = ::mkostemp(paths.temporary.data(), O_CLOEXEC);
+            if (fd < 0) {
+              paths.temporary.clear();
+              ret = OB_IO_ERROR;
+            } else {
+              std::unique_ptr<FILE, decltype(&std::fclose)> file(::fdopen(fd, "wb"), &std::fclose);
+              if (!file) {
+                ::close(fd);
+                ret = OB_IO_ERROR;
+              }
+              for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.file_sql_copy_names_.count(); ++i) {
+                if ((i > 0 && std::fputc(',', file.get()) == EOF) ||
+                    !write_file_sql_csv_field(file.get(), MY_SPEC.file_sql_copy_names_.at(i), true)) {
+                  ret = OB_IO_ERROR;
+                }
+              }
+              if (OB_SUCC(ret) && MY_SPEC.file_sql_copy_names_.count() > 0 &&
+                  std::fputc('\n', file.get()) == EOF) {
+                ret = OB_IO_ERROR;
+              }
+              int64_t rows = 0;
+              bool exhausted = false;
+              std::vector<char> buffer(256);
+              while (OB_SUCC(ret) && !exhausted && rows < top_limit_cnt_) {
+                clear_evaluated_flag();
+                if (OB_FAIL(ctx_.check_status())) {
+                } else if (OB_FAIL(child_->get_next_row())) {
+                  if (ret == OB_ITER_END) {
+                    ret = OB_SUCCESS;
+                    exhausted = true;
+                  }
+                } else {
+                  for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.select_exprs_.count(); ++i) {
+                    ObExpr *expr = MY_SPEC.select_exprs_.at(i);
+                    ObDatum *datum = nullptr;
+                    ObObj obj;
+                    ObString value;
+                    bool quote = true;
+                    if (i > 0 && std::fputc(',', file.get()) == EOF) {
+                      ret = OB_IO_ERROR;
+                    } else if (OB_FAIL(expr->eval(eval_ctx_, datum))) {
+                    } else if (datum->is_null()) {
+                      quote = false;
+                      value = MY_SPEC.file_sql_copy_null_;
+                    } else if (OB_FAIL(datum->to_obj(obj, expr->obj_meta_, expr->obj_datum_map_))) {
+                    } else if (obj.is_string_type() && !ob_is_text_tc(obj.get_type())) {
+                      value = obj.get_string();
+                    } else if (ob_is_text_tc(obj.get_type())) {
+                      ret = OB_NOT_SUPPORTED;
+                      LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL COPY LOB output");
+                    } else {
+                      int64_t pos = 0;
+                      while (OB_SIZE_OVERFLOW == (ret = obj.print_plain_str_literal(
+                          buffer.data(), buffer.size(), pos, print_params_))) {
+                        buffer.resize(buffer.size() * 2);
+                        pos = 0;
+                      }
+                      if (OB_SUCC(ret)) {
+                        value.assign_ptr(buffer.data(), pos);
+                      }
+                    }
+                    if (OB_SUCC(ret) && !write_file_sql_csv_field(file.get(), value, quote)) {
+                      ret = OB_IO_ERROR;
+                    }
+                  }
+                  if (OB_SUCC(ret) && std::fputc('\n', file.get()) == EOF) {
+                    ret = OB_IO_ERROR;
+                  }
+                  ++rows;
+                }
+              }
+              if (OB_SUCC(ret) && (std::fflush(file.get()) != 0 || ::fsync(fd) != 0)) {
+                ret = OB_IO_ERROR;
+              }
+              if (file && std::fclose(file.release()) != 0 && OB_SUCC(ret)) {
+                ret = OB_IO_ERROR;
+              }
+              if (OB_SUCC(ret)) {
+                if (::linkat(AT_FDCWD, paths.temporary.data(), paths.directory, leaf.c_str(), 0) != 0) {
+                  ret = errno == EEXIST ? OB_FILE_ALREADY_EXIST : OB_IO_ERROR;
+                } else {
+                  plan->set_affected_rows(rows);
+                }
+              }
+            }
+          }
+        }
+      }
+    } catch (const std::exception &e) {
+      ret = OB_IO_ERROR;
+      LOG_WARN("FileSQL COPY failed", K(ret), "reason", e.what());
+    }
+  }
+#else
+  ret = OB_NOT_SUPPORTED;
+  LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
+#endif
+  return ret;
+}
+
 int ObSelectIntoOp::inner_get_next_row()
 {
+  if (MY_SPEC.file_sql_copy_) {
+    const int ret = copy_file_sql_csv();
+    return OB_SUCCESS == ret ? OB_ITER_END : ret;
+  }
   int ret = 0 == top_limit_cnt_ ? OB_ITER_END : OB_SUCCESS;
   int64_t row_count = 0;
   const ObItemType into_type = MY_SPEC.into_type_;
@@ -236,6 +438,11 @@ int ObSelectIntoOp::inner_get_next_row()
 
 int ObSelectIntoOp::inner_get_next_batch(const int64_t max_row_cnt)
 {
+  if (MY_SPEC.file_sql_copy_) {
+    brs_.size_ = 0;
+    brs_.end_ = true;
+    return copy_file_sql_csv();
+  }
   int ret = OB_SUCCESS;
   const ObBatchRows *child_brs = NULL;
   int64_t batch_size = min(max_row_cnt, MY_SPEC.max_batch_size_);

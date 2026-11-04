@@ -5487,6 +5487,20 @@ int ObStaticEngineCG::generate_spec(ObLogSelectInto &op, ObSelectIntoSpec &spec,
       spec.parallel_ = op.get_parallel();
       spec.is_overwrite_ = op.get_is_overwrite();
       spec.plan_->need_drive_dml_query_ = true;
+      const auto *stmt = static_cast<const ObSelectStmt *>(op.get_stmt());
+      const auto *into = stmt->get_select_into();
+      if (into != nullptr && into->file_sql_copy_) {
+        spec.file_sql_copy_ = true;
+        OZ (ob_write_string(alloc, into->file_sql_copy_null_, spec.file_sql_copy_null_));
+        if (into->file_sql_copy_header_) {
+          OZ (spec.file_sql_copy_names_.init(stmt->get_select_item_size()));
+          for (int64_t i = 0; OB_SUCC(ret) && i < stmt->get_select_item_size(); ++i) {
+            ObString name;
+            OZ (ob_write_string(alloc, stmt->get_select_item(i).alias_name_, name));
+            OZ (spec.file_sql_copy_names_.push_back(name));
+          }
+        }
+      }
     }
   }
   return ret;

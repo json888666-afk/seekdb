@@ -372,7 +372,7 @@ END_P SET_VAR DELIMITER
         ORGANIZATION
 //-----------------------------non_reserved keyword end---------------------------------------------
 %type <node> sql_stmt stmt_list stmt opt_end_p
-%type <node> select_stmt update_stmt delete_stmt
+%type <node> select_stmt update_stmt delete_stmt copy_csv_options copy_csv_stmt
 %type <node> insert_stmt single_table_insert values_clause dml_table_name
 %type <node> create_table_stmt create_table_like_stmt fork_table_stmt fork_database_stmt diff_table_stmt merge_table_stmt opt_table_option_list table_option_list table_option table_option_list_space_seperated parallel_option lob_storage_clause lob_storage_parameter lob_storage_parameters lob_chunk_size
 %type <node> index_or_heap
@@ -556,6 +556,7 @@ opt_end_p:
 /* only preparable statement will set question mark size */
 stmt:
     select_stmt             { $$ = $1; question_mark_issue($$, result); }
+  | copy_csv_stmt           { $$ = $1; question_mark_issue($$, result); }
   | insert_stmt             { $$ = $1; question_mark_issue($$, result); }
   | create_table_stmt       {
     $$ = $1;
@@ -8427,6 +8428,38 @@ expr { $$ = $1;}
  *	select grammar
  *
  *****************************************************************************/
+
+copy_csv_options:
+  /* empty */ { $$ = NULL; }
+| copy_csv_options ',' relation_name
+{
+  ParseNode *option = NULL;
+  malloc_non_terminal_node(option, result->malloc_pool_, T_LINK_NODE, 2, $3, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, option);
+}
+| copy_csv_options ',' relation_name STRING_VALUE
+{
+  ParseNode *option = NULL;
+  malloc_non_terminal_node(option, result->malloc_pool_, T_LINK_NODE, 2, $3, $4);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_LINK_NODE, 2, $1, option);
+}
+;
+
+copy_csv_stmt:
+COPY select_with_parens TO STRING_VALUE '(' FORMAT relation_name copy_csv_options ')'
+{
+  ParseNode *into = NULL;
+  if ($2->children_[PARSE_SELECT_INTO] != NULL || $2->children_[PARSE_SELECT_INTO_EXTRA] != NULL) {
+    yyerror(&@1, result, "COPY query already has an INTO clause");
+    YYERROR;
+  }
+  malloc_non_terminal_node(into, result->malloc_pool_, T_INTO_OUTFILE, 3, $4, $7, $8);
+  into->value_ = 1;
+  into->is_tree_not_param_ = true;
+  $$ = $2;
+  $$->children_[PARSE_SELECT_INTO_EXTRA] = into;
+}
+;
 
 select_stmt:
 select_no_parens opt_when

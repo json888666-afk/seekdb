@@ -3107,6 +3107,39 @@ int ObSelectResolver::resolve_into_clause(const ParseNode *node)
       if (T_INTO_OUTFILE == node->type_) { // into outfile
         if (is_in_set_query()) {
           ret = OB_INAPPROPRIATE_INTO;
+        } else if (node->value_ == 1 && node->num_child_ == 3) {
+          const auto *format = node->children_[1];
+          if (ObString(format->str_len_, format->str_value_).case_compare("csv") != 0) {
+            ret = OB_NOT_SUPPORTED;
+            LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL COPY format");
+          } else if (OB_FAIL(resolve_into_const_node(node->children_[0], into_item->outfile_name_))) {
+          } else {
+            into_item->file_sql_copy_ = true;
+            into_item->is_single_ = true;
+            bool seen_null = false;
+            for (const ParseNode *options = node->children_[2]; OB_SUCC(ret) && options != nullptr;
+                 options = options->children_[0]) {
+              const auto *option = options->children_[1];
+              const auto *key = option->children_[0];
+              const auto *value = option->children_[1];
+              const ObString name(key->str_len_, key->str_value_);
+              if (name.case_compare("header") == 0 && value == nullptr && !into_item->file_sql_copy_header_) {
+                into_item->file_sql_copy_header_ = true;
+              } else if (name.case_compare("nullstr") == 0 && value != nullptr && !seen_null) {
+                const ObString token(value->str_len_, value->str_value_);
+                for (int32_t i = 0; OB_SUCC(ret) && i < token.length(); ++i) {
+                  if (token[i] == ',' || token[i] == '"' || token[i] == '\n' || token[i] == '\r' ||
+                      token[i] == '\0') {
+                    ret = OB_INVALID_ARGUMENT;
+                  }
+                }
+                OZ (ob_write_string(*allocator_, token, into_item->file_sql_copy_null_));
+                seen_null = true;
+              } else {
+                ret = OB_INVALID_ARGUMENT;
+              }
+            }
+          }
         } else if (node->num_child_ == 3 && NULL != node->children_[1]
             && T_EXTERNAL_FILE_FORMAT == node->children_[1]->type_) { // Handle with `FORMAT`
           if (OB_FAIL(resolve_into_outfile_with_format(node, *into_item))) {
