@@ -12316,7 +12316,7 @@ explain_or_desc relation_factor opt_desc_column_option
 | explain_or_desc explainable_stmt
 {
   GEN_EXPLAN_STMT($1, $$, 0, 0, $2, NULL, NULL);
-  $$->value_ = ($1 != NULL);
+  $$->children_[0] = $1;
 }
 | explain_or_desc PRETTY explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY, $3, NULL, NULL);}
 | explain_or_desc PRETTY_COLOR explainable_stmt { GEN_EXPLAN_STMT($1, $$, 0, T_PRETTY_COLOR, $3, NULL, NULL);}
