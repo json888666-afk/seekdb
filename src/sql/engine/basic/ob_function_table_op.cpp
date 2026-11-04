@@ -88,7 +88,7 @@ private:
 };
 
 extern "C" {
-void *seekdb_file_parquet_open(const char *path);
+void *seekdb_file_parquet_open(const char *path, const int64_t *projection, int64_t count);
 void seekdb_file_parquet_close(void *scan);
 int seekdb_file_parquet_column(const void *scan, size_t index, const char **name, size_t *length, bool *nullable);
 int seekdb_file_parquet_next(void *scan, const char **data, size_t *length);
@@ -137,9 +137,11 @@ private:
 };
 
 int open_file_sql_parquet(const std::string &path, std::unique_ptr<std::istream> &input,
-                          std::vector<file_sql::CsvColumn> *schema)
+                          std::vector<file_sql::CsvColumn> *schema,
+                          const int64_t *projection, int64_t projection_count)
 {
-  FileSqlParquetScan scan(seekdb_file_parquet_open(path.c_str()), &seekdb_file_parquet_close);
+  FileSqlParquetScan scan(seekdb_file_parquet_open(path.c_str(), projection, projection_count),
+                          &seekdb_file_parquet_close);
   if (!scan) {
     return OB_INVALID_ARGUMENT;
   }
@@ -192,7 +194,8 @@ bool file_is_within(const std::filesystem::path &root, const std::filesystem::pa
 
 int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
                              std::unique_ptr<std::istream> &input, bool parquet,
-                             std::vector<file_sql::CsvColumn> *schema)
+                             std::vector<file_sql::CsvColumn> *schema,
+                             const int64_t *projection, int64_t projection_count)
 {
   int ret = OB_SUCCESS;
   bool enabled = false;
@@ -236,7 +239,7 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
               if (ec || !file_is_within(root, resolved)) {
                 ret = OB_ERR_NO_PRIVILEGE;
               } else if (parquet) {
-                ret = open_file_sql_parquet(proc_path, input, schema);
+                ret = open_file_sql_parquet(proc_path, input, schema, projection, projection_count);
               } else {
                 std::unique_ptr<FILE, decltype(&std::fclose)> file(
                     std::fopen(proc_path.c_str(), "rb"), &std::fclose);
@@ -259,6 +262,8 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
     UNUSED(path);
     UNUSED(parquet);
     UNUSED(schema);
+    UNUSED(projection);
+    UNUSED(projection_count);
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
 #endif
@@ -369,7 +374,10 @@ int ObFunctionTableOp::open_csv()
     ret = OB_INVALID_ARGUMENT;
   } else if (MY_SPEC.file_sql_glob_) {
     ret = file_sql::open_local_glob(*session, value->get_string(), csv_input_);
-  } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_, MY_SPEC.file_sql_parquet_))) {
+  } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_, MY_SPEC.file_sql_parquet_,
+                                                nullptr, MY_SPEC.file_sql_source_columns_.empty() ? nullptr :
+                                                    &MY_SPEC.file_sql_source_columns_.at(0),
+                                                MY_SPEC.file_sql_source_columns_.count()))) {
   } else if (MY_SPEC.file_sql_csv_header_) {
     try {
       if (!file_sql::CsvReader(*csv_input_).next(csv_row_) ||
