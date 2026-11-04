@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_RESV
+#include "share/ai_service/ai_column_rule.h"
 #include "config_bridge.h"
 #include "ob_ddl_resolver.h"
 #include "data_plane/blocksstable/ob_index_block_util.h"
@@ -1762,6 +1763,102 @@ int ObDDLResolver::resolve_column_name(ObColumnSchemaV2 &column,
   return ret;
 }
 
+namespace {
+
+int validate_ai_column_definition(const ParseNode &node, const ObColumnSchemaV2 &column)
+{
+  int ret = OB_SUCCESS;
+  share::AiColumnRule rule;
+  const ParseNode *expr = node.children_[4];
+  const ParseNode *options = node.children_[5];
+  const ParseNode *args = nullptr;
+  if (expr == nullptr || T_FUN_SYS != expr->type_ || expr->num_child_ != 2 ||
+      expr->children_[0] == nullptr || expr->children_[1] == nullptr) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN requires AI_COMPLETE or AI_EMBED");
+  } else {
+    const auto *name = expr->children_[0];
+    const ObString function(name->str_len_, name->str_value_);
+    args = expr->children_[1];
+    if (0 == function.case_compare("AI_COMPLETE")) {
+      rule.function = share::AiColumnFunction::COMPLETE;
+    } else if (0 == function.case_compare("AI_EMBED")) {
+      rule.function = share::AiColumnFunction::EMBED;
+    }
+    if (args->num_child_ < 2 || args->num_child_ > 3 || args->children_[0] == nullptr ||
+        args->children_[0]->type_ != T_VARCHAR || args->children_[0]->str_len_ == 0) {
+      ret = OB_INVALID_ARGUMENT;
+      LOG_USER_ERROR(OB_INVALID_ARGUMENT, "AI COLUMN model and arguments");
+    }
+    if (expr->str_value_ != nullptr) {
+      rule.normalized_expression = std::string_view(expr->str_value_, expr->str_len_);
+    }
+  }
+  bool seen_mode = false;
+  bool seen_retries = false;
+  for (int64_t i = 0; OB_SUCC(ret) && options != nullptr && i < options->num_child_; ++i) {
+    const auto *option = options->children_[i];
+    if (option == nullptr || option->type_ != T_OP_EQ || option->num_child_ != 2 ||
+        option->children_[0] == nullptr || option->children_[1] == nullptr ||
+        option->children_[0]->type_ != T_COLUMN_REF || option->children_[0]->num_child_ != 3 ||
+        option->children_[0]->children_[0] != nullptr || option->children_[0]->children_[1] != nullptr ||
+        option->children_[0]->children_[2] == nullptr) {
+      ret = OB_INVALID_ARGUMENT;
+    } else {
+      const auto *key = option->children_[0]->children_[2];
+      const auto *value = option->children_[1];
+      const ObString name(key->str_len_, key->str_value_);
+      if (!seen_mode && name.case_compare("sync_mode") == 0 && value->type_ == T_VARCHAR) {
+        rule.sync_mode = std::string_view(value->str_value_, value->str_len_);
+        seen_mode = true;
+      } else if (!seen_retries && name.case_compare("max_retries") == 0 && value->type_ == T_INT) {
+        rule.max_retries = value->value_;
+        seen_retries = true;
+      } else {
+        ret = OB_INVALID_ARGUMENT;
+      }
+    }
+  }
+  if (OB_SUCC(ret) && column.is_collection()) {
+    int64_t dimension = 0;
+    if (OB_FAIL(ObVectorIndexUtil::get_vector_dim_from_extend_type_info(column.get_extended_type_info(), dimension))) {
+    } else {
+      rule.result_type = share::AiColumnResultType::VECTOR;
+      rule.vector_dimension = dimension;
+    }
+  } else if (OB_SUCC(ret)) {
+    const auto &meta = column.get_meta_type();
+    if (meta.is_json()) {
+      rule.result_type = share::AiColumnResultType::JSON;
+    } else if (meta.is_string_type()) {
+      rule.result_type = share::AiColumnResultType::TEXT;
+    } else if (meta.is_integer_type()) {
+      rule.result_type = share::AiColumnResultType::INTEGER;
+    } else if (meta.is_numeric_type() || ob_is_decimal_int(meta.get_type())) {
+      rule.result_type = share::AiColumnResultType::NUMBER;
+    }
+  }
+  if (OB_SUCC(ret) && rule.function == share::AiColumnFunction::EMBED && args->num_child_ == 3) {
+    const auto *dimension = args->children_[2];
+    rule.has_explicit_embedding_dimension = true;
+    rule.requested_embedding_dimension = dimension != nullptr && dimension->type_ == T_INT ? dimension->value_ : 0;
+  }
+  if (OB_SUCC(ret)) {
+    const auto error = rule.validate();
+    if (error == share::AiColumnRuleError::INVALID_VECTOR_DIMENSION) {
+      ret = OB_ERR_INVALID_VECTOR_DIM;
+      LOG_USER_ERROR(OB_ERR_INVALID_VECTOR_DIM, static_cast<unsigned>(rule.vector_dimension),
+                     static_cast<unsigned>(rule.requested_embedding_dimension));
+    } else if (error != share::AiColumnRuleError::OK) {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN definition");
+    }
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
                                              ParseNode *node, /* column_definition */
                                              ObColumnResolveStat &resolve_stat,
@@ -1784,9 +1881,6 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
     ret = OB_ERR_UNEXPECTED;
     SQL_RESV_LOG(WARN, "invalid parse node",
                  K(ret), K(node->type_), K(node->num_child_), K_(allocator), K_(session_info));
-  } else if (AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
-    ret = OB_NOT_SUPPORTED;
-    LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN persistence");
   } else {
     resolve_stat.reset();
     column_definition_ref_node = node->children_[0];
@@ -1876,6 +1970,13 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
         if (OB_FAIL(resolve_collection_column(type_node, column))) {
         }
       }
+    }
+  }
+  if (OB_SUCC(ret) && AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
+    if (OB_FAIL(validate_ai_column_definition(*node, column))) {
+    } else {
+      ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN persistence");
     }
   }
   if (OB_SUCC(ret) && GEN_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
