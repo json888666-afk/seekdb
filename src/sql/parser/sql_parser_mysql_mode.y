@@ -11248,14 +11248,17 @@ relation_factor %prec LOWER_PARENS
 }
 | relation_name '(' expr_list ')' %prec LOWER_PARENS
 {
+  $3->is_tree_not_param_ = true;
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, NULL);
 }
 | relation_name '(' expr_list ')' relation_name
 {
+  $3->is_tree_not_param_ = true;
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
 }
 | relation_name '(' expr_list ')' AS relation_name
 {
+  $3->is_tree_not_param_ = true;
   malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $6);
 }
 | TABLE '(' simple_expr ')' %prec LOWER_PARENS
