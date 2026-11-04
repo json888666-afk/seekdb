@@ -16,6 +16,11 @@
 
 #define USING_LOG_PREFIX SERVER_OMT
 #include "ob_ai_service.h"
+#include "observer/ai_service/ob_ai_service_proxy.h"
+#include "observer/ob_server.h"
+#include "share/schema/ob_multi_version_schema_service.h"
+#include "lib/utility/utility.h"
+#include <rapidjson/document.h>
 #include "observer/ai_service/ob_ai_service_executor.h"
 #include "sql/privilege_check/ob_ai_model_priv_util.h"
 #include "sql/session/ob_sql_session_info.h"
@@ -59,8 +64,143 @@ int ObAiService::init()
   return ret;
 }
 
+namespace {
+
+int append_identifier(ObSqlString &sql, const ObString &name)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append("`"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < name.length(); ++i) {
+    if (name[i] == '`') {
+      OZ (sql.append("`"));
+    }
+    OZ (sql.append(name.ptr() + i, 1));
+  }
+  OZ (sql.append("`"));
+  return ret;
+}
+
+int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
+                         const ObString &table, const ObAiColumnWork &task, ObString &value)
+{
+  int ret = OB_SUCCESS;
+  rapidjson::Document rule;
+  rule.Parse(task.rule_.ptr(), task.rule_.length());
+  ObSqlString sql;
+  if (rule.HasParseError() || !rule.IsObject() || !rule.HasMember("expression") ||
+      !rule["expression"].IsString()) {
+    ret = OB_ERR_UNEXPECTED;
+  } else {
+    const auto &expr = rule["expression"];
+    OZ (sql.append("SELECT CAST(("));
+    OZ (sql.append(expr.GetString(), expr.GetStringLength()));
+    OZ (sql.append_fmt(") AS CHAR) AS ai_value FROM %.*s WHERE %.*s",
+                       table.length(), table.ptr(), task.predicate_.length(), task.predicate_.ptr()));
+    ObISQLClient::ReadResult result;
+    OZ (proxy.read(result, sql.ptr()));
+    auto *row = result.get_result();
+    CK (OB_NOT_NULL(row));
+    OZ (row->next());
+    ObString text;
+    OZ (row->get_varchar("ai_value", text));
+    OZ (ob_write_string(allocator, text, value));
+  }
+  return ret;
+}
+
+int execute_ai_column_group(ObISQLClient &proxy, ObArenaAllocator &allocator, const ObAiColumnLease &lease)
+{
+  int ret = OB_SUCCESS;
+  ObSEArray<ObAiColumnWork, 8> tasks;
+  OZ (ObAiServiceProxy::read_ai_column_request(allocator, proxy, lease, tasks));
+  schema::ObSchemaGetterGuard guard;
+  const schema::ObTableSchema *table = nullptr;
+  const schema::ObDatabaseSchema *database = nullptr;
+  CK (OB_NOT_NULL(GCTX.schema_service_));
+  OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
+  OZ (guard.get_table_schema(lease.table_id_, table));
+  CK (OB_NOT_NULL(table));
+  OZ (guard.get_database_schema(table->get_database_id(), database));
+  CK (OB_NOT_NULL(database));
+
+  ObSqlString qualified;
+  ObSqlString writeback;
+  OZ (append_identifier(qualified, database->get_database_name_str()));
+  OZ (qualified.append("."));
+  OZ (append_identifier(qualified, table->get_table_name_str()));
+  OZ (writeback.append_fmt("UPDATE /*+ use_plan_cache(none) */ %s SET ", qualified.ptr()));
+  for (int64_t i = 0; OB_SUCC(ret) && i < tasks.count(); ++i) {
+    const auto &task = tasks.at(i);
+    const auto *column = table->get_column_schema(task.column_id_);
+    ObString value;
+    CK (OB_NOT_NULL(column), column->is_ai_result_column());
+    OZ (read_ai_column_value(proxy, allocator, qualified.string(), task, value));
+    if (i != 0) {
+      OZ (writeback.append(", "));
+    }
+    OZ (append_identifier(writeback, column->get_column_name_str()));
+    OZ (writeback.append("="));
+    if (OB_SUCC(ret) && !column->get_meta_type().is_string_type()) {
+      // Convert text on assignment, including JSON and vector types.
+      OZ (writeback.append("CONVERT("));
+      OZ (sql_append_hex_escape_str(value, writeback));
+      OZ (writeback.append(" USING utf8mb4)"));
+    } else {
+      OZ (sql_append_hex_escape_str(value, writeback));
+    }
+    char state[64];
+    OZ (schema::ObColumnSchemaV2::ai_column_companion_name(state, sizeof(state), task.column_id_, 0));
+    OZ (writeback.append_fmt(", `%s`=1", state));
+  }
+  if (OB_SUCC(ret)) {
+    OZ (writeback.append(" WHERE "));
+    OZ (writeback.append(tasks.at(0).predicate_));
+    OZ (ObAiServiceProxy::publish_ai_column_request(proxy, lease, writeback.string()));
+  }
+  return ret;
+}
+
+} // namespace
+
+int ObAiService::start()
+{
+  int ret = OB_SUCCESS;
+  if (OB_FAIL(ai_column_timer_.init("AiColumn"))) {
+  } else if (OB_FAIL(ai_column_timer_.schedule(*this, 200000, true))) {
+    ai_column_timer_.destroy();
+  }
+  return ret;
+}
+
+void ObAiService::stop()
+{
+  ai_column_timer_.stop();
+}
+
+void ObAiService::wait()
+{
+  ai_column_timer_.wait();
+}
+
+void ObAiService::runTimerTask()
+{
+  if (GCTX.in_bootstrap_ || GCTX.sql_proxy_ == nullptr) {
+    return;
+  }
+  ObArenaAllocator allocator("AiColumnWorker");
+  ObAiColumnLease lease;
+  int ret = ObAiServiceProxy::claim_ai_column_request(allocator, *GCTX.sql_proxy_, 60000000, lease);
+  if (OB_SUCC(ret)) {
+    ret = execute_ai_column_group(*GCTX.sql_proxy_, allocator, lease);
+  }
+  if (ret != OB_SUCCESS && ret != OB_ENTRY_NOT_EXIST && ret != OB_EAGAIN) {
+    LOG_WARN("AI column worker could not process a request", K(ret), K(lease.table_id_));
+  }
+}
+
 void ObAiService::destroy()
 {
+  ai_column_timer_.destroy();
   is_inited_ = false;
 }
 
