@@ -70,6 +70,36 @@ ObDelUpdResolver::~ObDelUpdResolver()
   // TODO Auto-generated destructor stub
 }
 
+int ObDelUpdResolver::is_ai_write_target(const TableItem &table, const ColumnItem &column, bool &is_ai_result)
+{
+  int ret = OB_SUCCESS;
+  is_ai_result = false;
+  const uint64_t table_id = column.base_tid_ != OB_INVALID_ID ? column.base_tid_ :
+                            table.is_basic_table() ? table.ref_id_ : OB_INVALID_ID;
+  const uint64_t column_id = column.base_cid_ != OB_INVALID_ID ? column.base_cid_ : column.column_id_;
+  const ObColumnSchemaV2 *schema = nullptr;
+  if (OB_ISNULL(session_info_) || OB_ISNULL(schema_checker_)) {
+    ret = OB_ERR_UNEXPECTED;
+  } else if (table_id == OB_INVALID_ID || session_info_->get_ddl_info().is_ddl()) {
+  } else if (OB_FAIL(schema_checker_->get_column_schema(table_id, column_id, schema, true))) {
+  } else if (schema != nullptr) {
+    is_ai_result = schema->is_ai_result_column();
+  }
+  return ret;
+}
+
+int ObDelUpdResolver::check_ai_write_target(const TableItem &table, const ColumnItem &column)
+{
+  int ret = OB_SUCCESS;
+  bool is_ai_result = false;
+  if (OB_FAIL(is_ai_write_target(table, column, is_ai_result))) {
+  } else if (is_ai_result) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "direct assignment to an AI result column");
+  }
+  return ret;
+}
+
 int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
                                           ObIArray<ObTableAssignment> &table_assigns,
                                           ObStmtScope scope)
@@ -124,6 +154,9 @@ int ObDelUpdResolver::resolve_assignments(const ParseNode &parse_node,
         }
       }
       // process expression
+      if (OB_SUCC(ret)) {
+        OZ (check_ai_write_target(*table, *column));
+      }
       if (OB_SUCC(ret)) {
         assignment.column_expr_ = column->expr_;
         ObRawExpr *expr = value_list.at(i);
@@ -2170,7 +2203,13 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
       } else if (!session_info_->get_ddl_info().is_ddl() && OB_HIDDEN_SESS_CREATE_TIME_COLUMN_ID == column_expr->get_column_id()) {
         ret = OB_NOT_SUPPORTED;
         LOG_USER_ERROR(OB_NOT_SUPPORTED, "specify __sess_create_time value");
-      } else if (OB_FAIL(mock_values_column_ref(column_expr))) {
+      } else {
+        const auto *column = del_upd_stmt->get_column_item_by_id(column_expr->get_table_id(), column_expr->get_column_id());
+        if (column == nullptr) {
+          ret = OB_ERR_UNEXPECTED;
+        } else if (OB_FAIL(check_ai_write_target(*table_item, *column))) {
+        } else if (OB_FAIL(mock_values_column_ref(column_expr))) {
+        }
       }
     }//end for
   } else {
@@ -2192,9 +2231,14 @@ int ObDelUpdResolver::resolve_insert_columns(const ParseNode *node,
     if (OB_SUCC(ret)) {
       int64_t N = column_items.count();
       for (int64_t i = 0; OB_SUCC(ret) && i < N; i++) {
-        uint64_t column_id = column_items.at(i).column_id_;
+        const ColumnItem &column = column_items.at(i);
+        const uint64_t column_id = column.column_id_;
         bool is_duplicate = false;
-        if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
+        bool is_ai_result = false;
+        if (OB_FAIL(is_ai_write_target(*table_item, column, is_ai_result))) {
+        } else if (is_ai_result) {
+          continue;
+        } else if (OB_FAIL(check_insert_column_duplicate(column_id, is_duplicate))) {
         } else if (is_duplicate) {
           ret = OB_ERR_FIELD_SPECIFIED_TWICE;
           ObCStringHelper helper;

@@ -1896,6 +1896,8 @@ int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &colum
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN definition");
     } else if (OB_FAIL(column.set_ai_column_rule(
                    ObString(rule.normalized_expression.size(), rule.normalized_expression.data()), rule.max_retries))) {
+    } else {
+      column.add_column_flag(AI_RESULT_COLUMN_FLAG);
     }
   }
   return ret;

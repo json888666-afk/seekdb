@@ -139,6 +139,7 @@ int assign(const ObColumnSchemaV2 &src_schema);
   inline int set_cur_default_value_v2(const common::ObObj default_value) { return deep_copy_obj(default_value, cur_default_value_); }
   inline int set_column_name(const char *col_name) { return deep_copy_str(col_name, column_name_); }
   inline int set_column_name(const common::ObString &col_name) { return deep_copy_str(col_name, column_name_); }
+  bool is_ai_result_column() const { return (column_flags_ & AI_RESULT_COLUMN_FLAG) != 0; }
   int set_ai_column_rule(const common::ObString &expression, int64_t max_retries);
   const common::ObString &get_ai_column_expression() const { return ai_column_expression_; }
   int64_t get_ai_column_max_retries() const { return ai_column_max_retries_; }

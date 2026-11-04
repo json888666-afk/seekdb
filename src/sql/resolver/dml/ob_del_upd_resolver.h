@@ -172,6 +172,8 @@ protected:
   int generate_autoinc_params(ObInsertTableInfo &table_info);
   int get_value_row_size(uint64_t &count);
 
+  int is_ai_write_target(const TableItem &table, const ColumnItem &column, bool &is_ai_result);
+  int check_ai_write_target(const TableItem &table, const ColumnItem &column);
   int resolve_insert_columns(const ParseNode *node,
                              ObInsertTableInfo& table_info);
   int resolve_insert_values(const ParseNode *node,
