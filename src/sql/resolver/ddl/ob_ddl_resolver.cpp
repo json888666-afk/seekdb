@@ -1784,6 +1784,9 @@ int ObDDLResolver::resolve_column_definition(ObColumnSchemaV2 &column,
     ret = OB_ERR_UNEXPECTED;
     SQL_RESV_LOG(WARN, "invalid parse node",
                  K(ret), K(node->type_), K(node->num_child_), K_(allocator), K_(session_info));
+  } else if (AI_COLUMN_DEFINITION_NUM_CHILD == node->num_child_) {
+    ret = OB_NOT_SUPPORTED;
+    LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN persistence");
   } else {
     resolve_stat.reset();
     column_definition_ref_node = node->children_[0];

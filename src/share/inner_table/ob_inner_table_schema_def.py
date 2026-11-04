@@ -2468,6 +2468,60 @@ def_table_schema(**all_objauth_mysql_def)
 def_table_schema(**gen_history_table_def(1134, all_objauth_mysql_def))
 
 
+# Per-column rules persisted separately from the user-visible result column.
+# The three companion column IDs refer to physical, hidden row columns.
+def_table_schema(
+    owner='seekdb',
+    table_name='__all_ai_column',
+    table_id='1135',
+    table_type='SYSTEM_TABLE',
+    gm_columns=['gmt_create', 'gmt_modified'],
+    is_cluster_private=False,
+    meta_record_in_sys=False,
+    rowkey_columns=[
+        ('table_id', 'int'),
+        ('column_id', 'int')
+    ],
+    normal_columns=[
+        ('column_name', 'varchar:OB_MAX_COLUMN_NAME_LENGTH', 'false'),
+        ('normalized_expr', 'varchar:OB_MAX_DEFAULT_VALUE_LENGTH', 'false'),
+        ('state_column_id', 'int', 'false'),
+        ('request_column_id', 'int', 'false'),
+        ('result_spec_column_id', 'int', 'false'),
+        ('max_retries', 'int', 'false', 0),
+        ('definition_version', 'int', 'false'),
+        ('dependency_ids', 'varbinary:OB_MAX_DEFAULT_VALUE_LENGTH', 'false')
+    ]
+)
+
+# Task versions are keyed by request ID so late responses cannot overwrite
+# the work belonging to a newer request for the same row and result column.
+def_table_schema(
+    owner='seekdb',
+    table_name='__all_ai_column_task',
+    table_id='1136',
+    table_type='SYSTEM_TABLE',
+    gm_columns=['gmt_create', 'gmt_modified'],
+    is_cluster_private=False,
+    meta_record_in_sys=False,
+    rowkey_columns=[
+        ('table_id', 'int'),
+        ('request_id', 'varchar:64'),
+        ('column_id', 'int')
+    ],
+    normal_columns=[
+        ('row_key', 'varbinary:OB_MAX_DEFAULT_VALUE_LENGTH', 'false'),
+        ('definition_version', 'int', 'false'),
+        ('eligible_ts', 'timestamp:6', 'false'),
+        ('state', 'int', 'false', 0),
+        ('retry_count', 'int', 'false', 0),
+        ('lease_token', 'varchar:64', 'true'),
+        ('lease_expiry', 'timestamp:6', 'true')
+    ]
+)
+
+
+
 # Reserved position (placeholder before this line)
 # Placeholder suggestion for this section: Use actual table names for placeholders
 ################################################################################
