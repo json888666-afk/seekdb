@@ -660,6 +660,25 @@ int ObTableSqlService::exchange_subpart_info(
   return ret;
 }
 
+namespace {
+
+int delete_ai_column_tasks_for_ddl(ObISQLClient &sql_client, uint64_t table_id,
+                                   uint64_t column_id = OB_INVALID_ID)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString sql;
+  int64_t affected_rows = 0;
+  OZ (sql.append_fmt("DELETE FROM oceanbase.%s WHERE table_id=%llu",
+                     OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(table_id)));
+  if (OB_SUCC(ret) && column_id != OB_INVALID_ID) {
+    OZ (sql.append_fmt(" AND column_id=%llu", static_cast<unsigned long long>(column_id)));
+  }
+  OZ (sql_client.write(sql.ptr(), affected_rows));
+  return ret;
+}
+
+} // namespace
+
 int ObTableSqlService::drop_table(const ObTableSchema &table_schema,
                                   const int64_t new_schema_version,
                                   ObISQLClient &sql_client,
@@ -680,6 +699,13 @@ int ObTableSqlService::drop_table(const ObTableSchema &table_schema,
     if (OB_FAIL(delete_from_all_table_history(
                 sql_client, table_schema, new_schema_version))) {
     }
+  }
+  bool has_ai_columns = false;
+  for (auto it = table_schema.column_begin(); OB_SUCC(ret) && !has_ai_columns && it != table_schema.column_end(); ++it) {
+    has_ai_columns = *it != nullptr && (*it)->is_ai_result_column();
+  }
+  if (OB_SUCC(ret) && has_ai_columns) {
+    OZ (delete_ai_column_tasks_for_ddl(sql_client, table_id));
   }
   bool need_drop_column = (!table_schema.is_view_table() || table_schema.view_column_filled());
   // delete from __all_column_history
@@ -2056,6 +2082,8 @@ int ObTableSqlService::delete_single_column(
 
   ObDMLSqlSplicer dml;
   if (OB_FAIL(check_ddl_allowed(new_table_schema))) {
+  } else if (orig_column_schema.is_ai_result_column() &&
+             OB_FAIL(delete_ai_column_tasks_for_ddl(sql_client, table_id, column_id))) {
   } else if (OB_FAIL(dml.add_pk_column("table_id", ObSchemaUtils::get_extract_schema_id(
                                                table_id)))
       || OB_FAIL(dml.add_pk_column("column_id", column_id))) {
