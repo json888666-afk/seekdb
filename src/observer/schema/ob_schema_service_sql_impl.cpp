@@ -1318,6 +1318,71 @@ int ObSchemaServiceSQLImpl::get_sys_variable_schema(
   return ret;
 }
 
+namespace {
+
+int restore_ai_column_definitions(const ObRefreshSchemaStatus &schema_status,
+                                  int64_t schema_version,
+                                  ObISQLClient &sql_client,
+                                  ObTableSchema &table)
+{
+  int ret = OB_SUCCESS;
+  int64_t expected = 0;
+  for (auto it = table.column_begin(); it != table.column_end(); ++it) {
+    if (*it != nullptr && (*it)->is_ai_result_column()) {
+      ++expected;
+    }
+  }
+  if (expected == 0) {
+    return ret;
+  }
+
+  SMART_VAR(ObMySQLProxy::MySQLResult, res) {
+    ObSqlString sql;
+    const int64_t snapshot_timestamp = schema_status.snapshot_timestamp_;
+    DEFINE_SQL_CLIENT_RETRY_WEAK_WITH_SNAPSHOT(sql_client, snapshot_timestamp);
+    ObMySQLResult *result = nullptr;
+    if (OB_FAIL(sql.append_fmt(
+        "SELECT column_id,normalized_expr,max_retries,dependency_ids FROM oceanbase.%s "
+        "WHERE table_id=%llu AND definition_version<=%lld",
+        OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(table.get_table_id()),
+        static_cast<long long>(schema_version)))) {
+    } else if (OB_FAIL(sql_client_retry_weak.read(res, sql.ptr()))) {
+    } else if (OB_ISNULL(result = res.get_result())) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      int64_t loaded = 0;
+      while (OB_SUCC(ret) && OB_SUCC(ret = result->next())) {
+        uint64_t column_id = OB_INVALID_ID;
+        int64_t max_retries = 0;
+        ObString expression;
+        ObString dependencies;
+        EXTRACT_INT_FIELD_MYSQL(*result, "column_id", column_id, uint64_t);
+        EXTRACT_INT_FIELD_MYSQL(*result, "max_retries", max_retries, int64_t);
+        EXTRACT_VARCHAR_FIELD_MYSQL(*result, "normalized_expr", expression);
+        EXTRACT_VARCHAR_FIELD_MYSQL(*result, "dependency_ids", dependencies);
+        if (OB_SUCC(ret)) {
+          auto *column = table.get_column_schema(column_id);
+          if (column != nullptr && column->is_ai_result_column()) {
+            OZ (column->set_ai_column_rule(expression, max_retries));
+            OZ (column->set_ai_column_dependencies(dependencies));
+            OX (++loaded);
+          }
+        }
+      }
+      if (ret == OB_ITER_END) {
+        ret = loaded == expected ? OB_SUCCESS : OB_ERR_UNEXPECTED;
+        if (OB_FAIL(ret)) {
+          LOG_WARN("AI column schema is missing persisted definitions", K(ret), K(expected), K(loaded),
+                   "table_id", table.get_table_id());
+        }
+      }
+    }
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObSchemaServiceSQLImpl::fetch_all_column_info(
     const ObRefreshSchemaStatus &schema_status,
     const int64_t schema_version,
@@ -1369,6 +1434,11 @@ int ObSchemaServiceSQLImpl::fetch_all_column_info(
         ret = OB_ERR_UNEXPECTED;
       } else if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_column_schema(check_deleted, *result, table_schema_array))) {
       }
+    }
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < table_schema_array.count(); ++i) {
+    if (table_schema_array.at(i) != nullptr) {
+      OZ (restore_ai_column_definitions(schema_status, schema_version, sql_client, *table_schema_array.at(i)));
     }
   }
   return ret;
@@ -4168,6 +4238,9 @@ int ObSchemaServiceSQLImpl::fetch_column_info(const ObRefreshSchemaStatus &schem
       } else if (OB_FAIL(ObSchemaRetrieveUtils::retrieve_column_schema(check_deleted, *result, table_schema))) {
       }
     }
+  }
+  if (OB_SUCC(ret) && table_schema != nullptr) {
+    OZ (restore_ai_column_definitions(schema_status, schema_version, sql_client, *table_schema));
   }
   return ret;
 }
