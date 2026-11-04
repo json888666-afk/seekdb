@@ -362,6 +362,7 @@ int resolve_ai_column_retry(const ParseNode &action, const ObTableSchema &table,
     column = table.get_column_schema(ObString(name.str_len_, name.str_value_));
     if (column == nullptr || !column->is_ai_result_column()) {
       ret = OB_NOT_SUPPORTED;
+      LOG_USER_ERROR(OB_NOT_SUPPORTED, "retrying a column that is not an AI column");
     }
   }
 
@@ -433,9 +434,11 @@ int ObAlterTableResolver::resolve_action_list(const ParseNode &node)
   } else {
     for (int64_t i = 0; i < node.num_child_; ++i) {
       if (node.children_[i] != nullptr && node.children_[i]->type_ == T_RETRY_AI_COLUMN) {
-        return node.num_child_ == 1 ?
-            resolve_ai_column_retry(*node.children_[i], *table_schema_, *allocator_, *alter_table_stmt) :
-            OB_NOT_SUPPORTED;
+        if (node.num_child_ != 1) {
+          LOG_USER_ERROR(OB_NOT_SUPPORTED, "combining AI COLUMN RETRY with another ALTER action");
+          return OB_NOT_SUPPORTED;
+        }
+        return resolve_ai_column_retry(*node.children_[i], *table_schema_, *allocator_, *alter_table_stmt);
       }
     }
     // Get the existing index name in the table, and initialize current_index_name_set_
