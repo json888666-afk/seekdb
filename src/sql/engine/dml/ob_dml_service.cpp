@@ -2249,8 +2249,19 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
         OZ (sql_append_hex_escape_str(ObString(pos, data), sql));
         OZ (sql.append(", "));
         OZ (sql_append_hex_escape_str(predicate.string(), sql));
-        OZ (sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s WHERE table_id=%llu",
+        OZ (sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s "
+            "WHERE table_id=%llu AND column_id IN (",
             OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.index_tid_)));
+        bool first = true;
+        for (auto it = table->column_begin(); OB_SUCC(ret) && it != table->column_end(); ++it) {
+          if (*it != nullptr && (*it)->is_ai_result_column()) {
+            OZ (sql.append_fmt(first ? "%llu" : ",%llu",
+                               static_cast<unsigned long long>((*it)->get_column_id())));
+            first = false;
+          }
+        }
+        CK (!first);
+        OZ (sql.append(")"));
       } else {
         OZ (sql.append_fmt("DELETE FROM oceanbase.%s WHERE table_id=%llu AND row_key=",
             OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(das.index_tid_)));
