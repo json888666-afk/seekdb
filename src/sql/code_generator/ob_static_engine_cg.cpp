@@ -148,8 +148,13 @@ int compile_ai_read_checks(const ObLogPlan &plan, ObPhysicalPlan &physical)
       const auto &stmt = *statements.at(i);
       ObSEArray<ObSelectStmt *, 8> children;
       ObSEArray<ObRawExpr *, 32> expressions;
+      ObStmtExprGetter read_expressions;
+      read_expressions.set_relation_scope();
+      read_expressions.remove_scope(SCOPE_DML_COLUMN);
+      read_expressions.remove_scope(SCOPE_DML_CONSTRAINT);
+      read_expressions.remove_scope(SCOPE_DMLINFOS);
       OZ (stmt.get_child_stmts(children));
-      OZ (stmt.get_relation_exprs(expressions));
+      OZ (stmt.get_relation_exprs(expressions, read_expressions));
       for (int64_t j = 0; OB_SUCC(ret) && j < children.count(); ++j) {
         const auto *child = children.at(j);
         if (child != nullptr && !has_exist_in_array(statements, static_cast<const ObDMLStmt *>(child))) {
