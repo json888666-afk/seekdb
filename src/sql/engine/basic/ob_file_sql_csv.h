@@ -28,8 +28,11 @@ namespace sql {
 class ObSQLSessionInfo;
 namespace file_sql {
 
+struct CsvColumn;
+
 int open_local_csv(ObSQLSessionInfo &session, const common::ObString &path,
-                   std::unique_ptr<std::istream> &input);
+                   std::unique_ptr<std::istream> &input, bool parquet = false,
+                   std::vector<CsvColumn> *schema = nullptr);
 int open_local_glob(ObSQLSessionInfo &session, const common::ObString &pattern,
                     std::unique_ptr<std::istream> &input, bool validate_only = false);
 

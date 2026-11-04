@@ -297,6 +297,7 @@ struct TableItem
   bool file_sql_csv_header_ = true;
   bool file_sql_json_lines_ = false;
   bool file_sql_glob_ = false;
+  bool file_sql_parquet_ = false;
   int64_t ddl_schema_version_;
   int64_t ddl_table_id_;
   // table partition

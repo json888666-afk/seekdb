@@ -5530,6 +5530,7 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
       OZ (spec.file_sql_source_columns_.init(op.get_stmt()->get_column_size()));
       spec.file_sql_json_lines_ = item->file_sql_json_lines_;
       spec.file_sql_glob_ = item->file_sql_glob_;
+      spec.file_sql_parquet_ = item->file_sql_parquet_;
       if (spec.file_sql_json_lines_) {
         spec.file_sql_csv_header_ = false;
         OZ (spec.file_sql_json_names_.init(op.get_stmt()->get_column_size()));

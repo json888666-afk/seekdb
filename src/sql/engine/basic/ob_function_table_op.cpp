@@ -46,7 +46,7 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_);
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_, file_sql_parquet_);
 
 #ifdef __linux__
 namespace {
@@ -87,6 +87,87 @@ private:
   FileSqlInputBuffer buffer_;
 };
 
+extern "C" {
+void *seekdb_file_parquet_open(const char *path);
+void seekdb_file_parquet_close(void *scan);
+int seekdb_file_parquet_column(const void *scan, size_t index, const char **name, size_t *length, bool *nullable);
+int seekdb_file_parquet_next(void *scan, const char **data, size_t *length);
+}
+
+using FileSqlParquetScan = std::unique_ptr<void, decltype(&seekdb_file_parquet_close)>;
+
+class FileSqlParquetBuffer : public std::streambuf
+{
+public:
+  explicit FileSqlParquetBuffer(FileSqlParquetScan scan) : scan_(std::move(scan)) {}
+private:
+  int_type underflow() override
+  {
+    if (gptr() != egptr()) {
+      return traits_type::to_int_type(*gptr());
+    }
+    const char *data = nullptr;
+    size_t length = 0;
+    const int status = seekdb_file_parquet_next(scan_.get(), &data, &length);
+    if (status < 0) {
+      throw std::runtime_error("could not decode Parquet row");
+    }
+    if (status == 0) {
+      return traits_type::eof();
+    }
+    row_.assign(data, length);
+    setg(row_.data(), row_.data(), row_.data() + row_.size());
+    return traits_type::to_int_type(*gptr());
+  }
+
+  FileSqlParquetScan scan_;
+  std::string row_;
+};
+
+class FileSqlParquetStream : public std::istream
+{
+public:
+  explicit FileSqlParquetStream(FileSqlParquetScan scan)
+    : std::istream(nullptr), buffer_(std::move(scan))
+  {
+    rdbuf(&buffer_);
+  }
+private:
+  FileSqlParquetBuffer buffer_;
+};
+
+int open_file_sql_parquet(const std::string &path, std::unique_ptr<std::istream> &input,
+                          std::vector<file_sql::CsvColumn> *schema)
+{
+  FileSqlParquetScan scan(seekdb_file_parquet_open(path.c_str()), &seekdb_file_parquet_close);
+  if (!scan) {
+    return OB_INVALID_ARGUMENT;
+  }
+  if (schema != nullptr) {
+    for (size_t index = 0; ; ++index) {
+      const char *name = nullptr;
+      size_t length = 0;
+      bool nullable = false;
+      const int kind = seekdb_file_parquet_column(scan.get(), index, &name, &length, &nullable);
+      if (kind == 0) {
+        break;
+      }
+      file_sql::CsvType type;
+      switch (kind) {
+        case 1: type = file_sql::CsvType::BIGINT; break;
+        case 2: type = file_sql::CsvType::DOUBLE; break;
+        case 3: type = file_sql::CsvType::BOOLEAN; break;
+        case 6: type = file_sql::CsvType::VARCHAR; break;
+        default: return OB_INVALID_ARGUMENT;
+      }
+      schema->push_back({std::string(name, length), type, nullable});
+    }
+  } else {
+    input = std::make_unique<FileSqlParquetStream>(std::move(scan));
+  }
+  return OB_SUCCESS;
+}
+
 struct FileSqlDescriptor
 {
   explicit FileSqlDescriptor(int fd) : fd_(fd) {}
@@ -110,7 +191,8 @@ bool file_is_within(const std::filesystem::path &root, const std::filesystem::pa
 #endif
 
 int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
-                             std::unique_ptr<std::istream> &input)
+                             std::unique_ptr<std::istream> &input, bool parquet,
+                             std::vector<file_sql::CsvColumn> *schema)
 {
   int ret = OB_SUCCESS;
   bool enabled = false;
@@ -153,6 +235,8 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
               const fs::path resolved = fs::canonical(proc_path, ec);
               if (ec || !file_is_within(root, resolved)) {
                 ret = OB_ERR_NO_PRIVILEGE;
+              } else if (parquet) {
+                ret = open_file_sql_parquet(proc_path, input, schema);
               } else {
                 std::unique_ptr<FILE, decltype(&std::fclose)> file(
                     std::fopen(proc_path.c_str(), "rb"), &std::fclose);
@@ -173,6 +257,8 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
     }
 #else
     UNUSED(path);
+    UNUSED(parquet);
+    UNUSED(schema);
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
 #endif
@@ -283,7 +369,7 @@ int ObFunctionTableOp::open_csv()
     ret = OB_INVALID_ARGUMENT;
   } else if (MY_SPEC.file_sql_glob_) {
     ret = file_sql::open_local_glob(*session, value->get_string(), csv_input_);
-  } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_))) {
+  } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_, MY_SPEC.file_sql_parquet_))) {
   } else if (MY_SPEC.file_sql_csv_header_) {
     try {
       if (!file_sql::CsvReader(*csv_input_).next(csv_row_) ||

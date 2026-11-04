@@ -43,6 +43,7 @@ public:
   bool file_sql_csv_header_ = true;
   bool file_sql_json_lines_ = false;
   bool file_sql_glob_ = false;
+  bool file_sql_parquet_ = false;
   bool has_correlated_expr_;
 };
 

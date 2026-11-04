@@ -18,3 +18,6 @@ mod bridge;
 mod records;
 
 pub use bridge::Store;
+
+#[cfg(target_os = "linux")]
+mod file_sql_parquet;
