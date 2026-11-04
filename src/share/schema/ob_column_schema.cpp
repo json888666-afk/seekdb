@@ -46,6 +46,18 @@ ObColumnSchemaV2::~ObColumnSchemaV2()
 {
 }
 
+int ObColumnSchemaV2::set_ai_column_rule(const ObString &expression, int64_t max_retries)
+{
+  int ret = OB_SUCCESS;
+  if (max_retries < 0) {
+    ret = OB_INVALID_ARGUMENT;
+  } else if (OB_FAIL(deep_copy_str(expression, ai_column_expression_))) {
+  } else {
+    ai_column_max_retries_ = max_retries;
+  }
+  return ret;
+}
+
 int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
 {
   int ret = OB_SUCCESS;
@@ -82,6 +94,7 @@ int ObColumnSchemaV2::assign(const ObColumnSchemaV2 &src_schema)
     } else if (OB_FAIL(deep_copy_obj(src_schema.cur_default_value_, cur_default_value_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.column_name_, column_name_))) {
     } else if (OB_FAIL(deep_copy_str(src_schema.comment_, comment_))) {
+    } else if (OB_FAIL(set_ai_column_rule(src_schema.ai_column_expression_, src_schema.ai_column_max_retries_))) {
     } else if (OB_FAIL(set_extended_type_info(src_schema.extended_type_info_))) {
     } else if (src_schema.column_ref_idxs_ != NULL) {
       if (OB_FAIL(alloc_column_ref_set())) {
@@ -120,6 +133,7 @@ int64_t ObColumnSchemaV2::get_convert_size() const
   convert_size += cur_default_value_.get_deep_copy_size();
   convert_size += column_name_.length() + 1;
   convert_size += comment_.length() + 1;
+  convert_size += ai_column_expression_.length() + 1;
   if (column_ref_idxs_ != NULL) {
     convert_size += sizeof(ColumnReferenceSet);
   }
@@ -176,6 +190,8 @@ void ObColumnSchemaV2::reset()
   cur_default_value_.reset();
   column_name_.reset();
   comment_.reset();
+  ai_column_expression_.reset();
+  ai_column_max_retries_ = 0;
   column_flags_ = NON_CASCADE_FLAG;
   column_ref_idxs_ = NULL;
   prev_column_id_ = UINT64_MAX;
@@ -236,6 +252,9 @@ OB_DEF_SERIALIZE(ObColumnSchemaV2)
                 skip_index_attr_,
                 lob_chunk_size_,
                 local_session_vars_);
+    if (!ai_column_expression_.empty()) {
+      LST_DO_CODE(OB_UNIS_ENCODE, ai_column_expression_, ai_column_max_retries_);
+    }
   }
 
   return ret;
@@ -296,6 +315,14 @@ OB_DEF_DESERIALIZE(ObColumnSchemaV2)
                 skip_index_attr_,
                 lob_chunk_size_,
                 local_session_vars_);
+    if (OB_SUCC(ret) && pos < data_len) {
+      ObString ai_expression;
+      int64_t max_retries = 0;
+      LST_DO_CODE(OB_UNIS_DECODE, ai_expression, max_retries);
+      if (OB_FAIL(ret)) {
+      } else if (OB_FAIL(set_ai_column_rule(ai_expression, max_retries))) {
+      }
+    }
   }
   return ret;
 }
@@ -341,6 +368,9 @@ OB_DEF_SERIALIZE_SIZE(ObColumnSchemaV2)
               skip_index_attr_,
               lob_chunk_size_,
               local_session_vars_);
+  if (!ai_column_expression_.empty()) {
+    LST_DO_CODE(OB_UNIS_ADD_LEN, ai_column_expression_, ai_column_max_retries_);
+  }
   return len;
 }
 

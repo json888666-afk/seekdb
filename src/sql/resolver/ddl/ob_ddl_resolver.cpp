@@ -1801,7 +1801,7 @@ int check_ai_column_input(const ParseNode &expr)
   return ret;
 }
 
-int validate_ai_column_definition(const ParseNode &node, const ObColumnSchemaV2 &column)
+int validate_ai_column_definition(const ParseNode &node, ObColumnSchemaV2 &column)
 {
   int ret = OB_SUCCESS;
   share::AiColumnRule rule;
@@ -1894,6 +1894,8 @@ int validate_ai_column_definition(const ParseNode &node, const ObColumnSchemaV2 
     } else if (error != share::AiColumnRuleError::OK) {
       ret = OB_NOT_SUPPORTED;
       LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN definition");
+    } else if (OB_FAIL(column.set_ai_column_rule(
+                   ObString(rule.normalized_expression.size(), rule.normalized_expression.data()), rule.max_retries))) {
     }
   }
   return ret;
