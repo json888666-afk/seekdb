@@ -16,6 +16,10 @@
 
 #define USING_LOG_PREFIX SQL_ENG
 #include "config_bridge.h"
+#include "common/rowkey/ob_rowkey.h"
+#include "lib/utility/utility.h"
+#include "share/inner_table/ob_inner_table_schema_constants.h"
+#include "sql/engine/expr/ob_expr_uuid.h"
 #include "sql/engine/dml/ob_dml_service.h"
 #include "sql/engine/expr/ob_datum_cast.h"
 #include "share/rc/ob_server_runtime.h"
@@ -2123,6 +2127,84 @@ int ObDMLService::get_nested_delete_ctx(const uint64_t table_id,
   return ret;
 }
 
+namespace {
+
+int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEventType event)
+{
+  int ret = OB_SUCCESS;
+  const auto &das = dml.das_base_ctdef_;
+  if (!das.has_ai_columns_ || (event != ObDmlEventType::DE_INSERTING
+      && event != ObDmlEventType::DE_DELETING)) {
+    return ret;
+  }
+
+  const bool inserting = event == ObDmlEventType::DE_INSERTING;
+  const auto &projector = inserting ? das.new_row_projector_ : das.old_row_projector_;
+  const auto &exprs = inserting ? dml.new_row_ : dml.old_row_;
+  ObSEArray<ObObj, 8> key_cells;
+  if (das.rowkey_cnt_ <= 0 || das.rowkey_cnt_ > projector.count()) {
+    ret = OB_ERR_UNEXPECTED;
+  }
+  for (int64_t i = 0; OB_SUCC(ret) && i < das.rowkey_cnt_; ++i) {
+    const int64_t index = projector.at(i);
+    if (index < 0 || index >= exprs.count() || exprs.at(index) == nullptr) {
+      ret = OB_ERR_UNEXPECTED;
+    } else {
+      ObDatum *datum = nullptr;
+      ObObj key_cell;
+      const ObExpr &expr = *exprs.at(index);
+      OZ (expr.eval(op.get_eval_ctx(), datum));
+      CK (OB_NOT_NULL(datum));
+      OZ (datum->to_obj(key_cell, expr.obj_meta_, expr.obj_datum_map_));
+      OZ (key_cells.push_back(key_cell));
+    }
+  }
+
+  ObSqlString sql;
+  ObRowkey row_key;
+  if (OB_SUCC(ret)) {
+    row_key.assign(&key_cells.at(0), key_cells.count());
+    const int64_t size = row_key.get_serialize_size();
+    if (size <= 0 || size > OB_MAX_DEFAULT_VALUE_LENGTH) {
+      ret = OB_SIZE_OVERFLOW;
+    } else {
+      ObArenaAllocator key_allocator("AiColumnKey");
+      char *data = static_cast<char *>(key_allocator.alloc(size));
+      int64_t pos = 0;
+      if (data == nullptr) {
+        ret = OB_ALLOCATE_MEMORY_FAILED;
+      } else if (OB_FAIL(row_key.serialize(data, size, pos))) {
+      } else if (inserting) {
+        char request[UuidCommon::LENGTH_UUID + 1] = {};
+        OZ (ObExprUuid::gen_server_uuid(request, UuidCommon::LENGTH_UUID));
+        OZ (sql.append_fmt("INSERT INTO oceanbase.%s "
+            "(table_id, request_id, column_id, row_key, definition_version, eligible_ts) "
+            "SELECT table_id, '%s', column_id, ", OB_ALL_AI_COLUMN_TASK_TNAME, request));
+        OZ (sql_append_hex_escape_str(ObString(pos, data), sql));
+        OZ (sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s WHERE table_id=%llu",
+            OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.table_id_)));
+      } else {
+        OZ (sql.append_fmt("DELETE FROM oceanbase.%s WHERE table_id=%llu AND row_key=",
+            OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(das.table_id_)));
+        OZ (sql_append_hex_escape_str(ObString(pos, data), sql));
+      }
+    }
+  }
+
+  if (OB_FAIL(ret)) {
+  } else if (OB_FAIL(op.begin_nested_session(true))) {
+  } else {
+    ret = op.execute_write(sql.ptr());
+    const int end_ret = op.end_nested_session();
+    if (OB_SUCC(ret)) {
+      ret = end_ret;
+    }
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObDMLService::handle_after_processing_multi_row(ObDMLModifyRowsList *dml_modify_rows, ObTableModifyOp *dml_op)
 {
   int ret = OB_SUCCESS;
@@ -2165,6 +2247,7 @@ int ObDMLService::handle_after_processing_multi_row(ObDMLModifyRowsList *dml_mod
             }
           }
         }
+        OZ (persist_ai_row_tasks(op, dml_ctdef, dml_event));
         // process after row trigger
         if (OB_SUCC(ret) && dml_ctdef.trig_ctdef_.all_tm_points_.has_after_row()) {
           ObEvalCtx &eval_ctx = op.get_eval_ctx();
@@ -2217,6 +2300,7 @@ int ObDMLService::handle_after_processing_single_row(ObDMLModifyRowNode &modify_
       } else if (OB_FAIL(ForeignKeyHandle::do_handle(op, dml_ctdef, dml_rtdef))) {
       }
     }
+    OZ (persist_ai_row_tasks(op, dml_ctdef, dml_event));
     if (OB_SUCC(ret) && OB_FAIL(TriggerHandle::do_handle_after_row(op, dml_ctdef.trig_ctdef_, dml_rtdef.trig_rtdef_, dml_event))) {
     }
   }
