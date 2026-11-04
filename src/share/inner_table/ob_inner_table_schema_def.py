@@ -2517,7 +2517,8 @@ def_table_schema(
         ('state', 'int', 'false', 0),
         ('retry_count', 'int', 'false', 0),
         ('lease_token', 'varchar:64', 'true'),
-        ('lease_expiry', 'timestamp:6', 'true')
+        ('lease_expiry', 'timestamp:6', 'true'),
+        ('result_text', 'longtext', 'true')
     ]
 )
 

@@ -150,15 +150,28 @@ int execute_ai_column_group(ObISQLClient &proxy, ObArenaAllocator &allocator, co
   for (int64_t i = 0; OB_SUCC(ret) && i < tasks.count(); ++i) {
     const auto &task = tasks.at(i);
     const auto *column = table->get_column_schema(task.column_id_);
-    ObString value;
+    ObString value = task.result_;
+    ObAiColumnState state = task.state_;
     CK (OB_NOT_NULL(column), column->is_ai_result_column());
-    OZ (read_ai_column_value(proxy, allocator, qualified.string(), task, column->get_meta_type(), value));
+    if (OB_SUCC(ret) && state == ObAiColumnState::PENDING) {
+      const int model_ret = read_ai_column_value(proxy, allocator, qualified.string(),
+                                                  task, column->get_meta_type(), value);
+      if (model_ret == OB_ITER_END) {
+        return OB_EAGAIN;
+      } else if (model_ret != OB_SUCCESS && task.retry_count_ < task.max_retries_) {
+        return ObAiServiceProxy::retry_ai_column_request(proxy, lease, task.column_id_);
+      }
+      state = model_ret == OB_SUCCESS ? ObAiColumnState::READY : ObAiColumnState::FAILED;
+      OZ (ObAiServiceProxy::save_ai_column_result(proxy, lease, task.column_id_, state, value));
+    }
     if (i != 0) {
       OZ (writeback.append(", "));
     }
     OZ (append_identifier(writeback, column->get_column_name_str()));
     OZ (writeback.append("="));
-    if (OB_SUCC(ret) && !column->get_meta_type().is_string_type()) {
+    if (state == ObAiColumnState::FAILED) {
+      OZ (writeback.append("NULL"));
+    } else if (OB_SUCC(ret) && !column->get_meta_type().is_string_type()) {
       // Convert text on assignment, including JSON and vector types.
       OZ (writeback.append("CONVERT("));
       OZ (sql_append_hex_escape_str(value, writeback));
@@ -166,9 +179,9 @@ int execute_ai_column_group(ObISQLClient &proxy, ObArenaAllocator &allocator, co
     } else {
       OZ (sql_append_hex_escape_str(value, writeback));
     }
-    char state[64];
-    OZ (schema::ObColumnSchemaV2::ai_column_companion_name(state, sizeof(state), task.column_id_, 0));
-    OZ (writeback.append_fmt(", `%s`=1", state));
+    char state_name[64];
+    OZ (schema::ObColumnSchemaV2::ai_column_companion_name(state_name, sizeof(state_name), task.column_id_, 0));
+    OZ (writeback.append_fmt(", `%s`=%lld", state_name, static_cast<long long>(state)));
   }
   if (OB_SUCC(ret)) {
     OZ (writeback.append(" WHERE "));

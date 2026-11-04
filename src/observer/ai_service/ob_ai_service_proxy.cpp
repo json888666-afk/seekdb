@@ -123,7 +123,8 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     ret = OB_INVALID_ARGUMENT;
   }
   OZ (sql.append_fmt("SELECT t.column_id, t.definition_version, t.retry_count, "
-      "t.rowkey_predicate, a.max_retries, a.normalized_expr "
+      "t.rowkey_predicate, a.max_retries, a.normalized_expr, t.state, "
+      "COALESCE(t.result_text, '') AS result_text "
       "FROM oceanbase.%s t JOIN oceanbase.%s a ON a.table_id=t.table_id "
       "AND a.column_id=t.column_id AND a.definition_version=t.definition_version "
       "JOIN oceanbase.%s c ON c.table_id=t.table_id AND c.column_id=t.column_id "
@@ -143,6 +144,8 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     ObAiColumnWork task;
     ObString predicate;
     ObString rule;
+    ObString value;
+    int64_t state = 0;
     EXTRACT_INT_FIELD_MYSQL(*row, "column_id", task.column_id_, uint64_t);
     EXTRACT_INT_FIELD_MYSQL(*row, "definition_version", task.definition_version_, int64_t);
     EXTRACT_INT_FIELD_MYSQL(*row, "retry_count", task.retry_count_, int64_t);
@@ -150,7 +153,12 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     EXTRACT_VARCHAR_FIELD_MYSQL(*row, "rowkey_predicate", predicate);
     EXTRACT_VARCHAR_FIELD_MYSQL(*row, "normalized_expr", rule);
     OZ (ob_write_string(allocator, predicate, task.predicate_));
+    EXTRACT_INT_FIELD_MYSQL(*row, "state", state, int64_t);
+    EXTRACT_VARCHAR_FIELD_MYSQL(*row, "result_text", value);
+    CK (state >= 0 && state <= static_cast<int64_t>(ObAiColumnState::FAILED));
+    OX (task.state_ = static_cast<ObAiColumnState>(state));
     OZ (ob_write_string(allocator, rule, task.rule_));
+    OZ (ob_write_string(allocator, value, task.result_));
     OZ (tasks.push_back(task));
   }
   if (ret == OB_ITER_END) {
@@ -160,6 +168,64 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     tasks.reset();
   }
   return ret;
+}
+
+namespace {
+int append_active_ai_lease(ObSqlString &sql, const ObAiColumnLease &lease)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append_fmt(" WHERE table_id=%llu AND lease_expiry > NOW(6) AND request_id=",
+                     static_cast<unsigned long long>(lease.table_id_)));
+  OZ (sql_append_hex_escape_str(lease.request_id_, sql));
+  OZ (sql.append(" AND lease_token="));
+  OZ (sql_append_hex_escape_str(lease.token_, sql));
+  return ret;
+}
+}
+
+int ObAiServiceProxy::save_ai_column_result(ObISQLClient &sql_proxy,
+                                              const ObAiColumnLease &lease, uint64_t column_id,
+                                              ObAiColumnState state, const ObString &value)
+{
+  int ret = OB_SUCCESS;
+  int64_t affected = 0;
+  ObSqlString sql;
+  OZ (sql.append_fmt("UPDATE oceanbase.%s SET state=%lld,result_text=",
+                     OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<long long>(state)));
+  if (state == ObAiColumnState::READY) {
+    OZ (sql.append("CONVERT("));
+    OZ (sql_append_hex_escape_str(value, sql));
+    OZ (sql.append(" USING utf8mb4)"));
+  } else {
+    OZ (sql.append("NULL"));
+  }
+  OZ (append_active_ai_lease(sql, lease));
+  OZ (sql.append_fmt(" AND state=0 AND column_id=%llu", static_cast<unsigned long long>(column_id)));
+  OZ (sql_proxy.write(sql.ptr(), affected));
+  if (OB_SUCC(ret) && affected != 1) {
+    ret = OB_EAGAIN;
+  }
+  return ret;
+}
+
+int ObAiServiceProxy::retry_ai_column_request(ObISQLClient &sql_proxy,
+                                                const ObAiColumnLease &lease, uint64_t failed_column)
+{
+  int ret = OB_SUCCESS;
+  int64_t affected = 0;
+  ObMySQLTransaction trans;
+  ObSqlString sql;
+  OZ (sql.append_fmt("UPDATE oceanbase.%s SET retry_count=retry_count+(column_id=%llu), "
+                     "eligible_ts=TIMESTAMPADD(MICROSECOND,500000,NOW(6)), "
+                     "lease_token=NULL,lease_expiry=NULL",
+                     OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(failed_column)));
+  OZ (append_active_ai_lease(sql, lease));
+  OZ (trans.start(&sql_proxy));
+  OZ (trans.write(sql.ptr(), affected));
+  if (OB_SUCC(ret) && affected != lease.task_count_) {
+    ret = OB_EAGAIN;
+  }
+  return trans.handle_trans_in_the_end(ret);
 }
 
 int ObAiServiceProxy::publish_ai_column_request(ObISQLClient &sql_proxy,
