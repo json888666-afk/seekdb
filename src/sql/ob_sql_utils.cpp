@@ -3374,7 +3374,7 @@ bool ObSQLUtils::is_iter_uncommitted_row(ObExecContext *cur_ctx)
 bool ObSQLUtils::is_nested_sql(ObExecContext *cur_ctx)
 {
   const bool ai_column_nested = cur_ctx != nullptr && cur_ctx->get_parent_ctx() != nullptr &&
-      cur_ctx->get_my_session() != nullptr &&
+      cur_ctx->get_my_session() != nullptr && cur_ctx->get_my_session()->is_nested_session() &&
       cur_ctx->get_my_session()->get_ddl_info().is_ai_column_writeback();
   return is_pl_nested_sql(cur_ctx) || is_fk_nested_sql(cur_ctx) ||
          is_online_stat_gathering_nested_sql(cur_ctx) || ai_column_nested;

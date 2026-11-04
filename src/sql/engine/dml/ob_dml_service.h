@@ -31,6 +31,18 @@ class ObTableModifyOp;
 class ObDMLService
 {
 public:
+  class AiRetryGuard
+  {
+  public:
+    AiRetryGuard(uint64_t table_id, uint64_t column_id);
+    ~AiRetryGuard();
+  private:
+    uint64_t saved_table_id_;
+    uint64_t saved_column_id_;
+    DISALLOW_COPY_AND_ASSIGN(AiRetryGuard);
+  };
+  static uint64_t get_ai_retry_column(uint64_t table_id);
+
   static bool check_cascaded_reference(const ObExpr *expr, const ObExprPtrIArray &row);
 
   static int check_row_null(const ObExprPtrIArray &row,

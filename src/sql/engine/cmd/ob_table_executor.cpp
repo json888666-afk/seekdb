@@ -29,6 +29,7 @@
 #include "sql/engine/cmd/ob_ddl_executor_util.h"
 #include "sql/resolver/ddl/ob_create_table_stmt.h"
 #include "sql/resolver/ddl/ob_alter_table_stmt.h"
+#include "sql/engine/dml/ob_dml_service.h"
 #include "sql/resolver/ddl/ob_drop_table_stmt.h"
 #include "sql/resolver/ddl/ob_rename_table_stmt.h"
 #include "sql/resolver/ddl/ob_truncate_table_stmt.h"
@@ -751,6 +752,67 @@ int ObAlterTableExecutor::alter_table_exchange_partition_rpc(obcall::ObExchangeP
   return ret;
 }
 
+namespace {
+
+int append_ai_retry_identifier(ObSqlString &sql, const ObString &name)
+{
+  int ret = OB_SUCCESS;
+  OZ (sql.append("`"));
+  for (int64_t i = 0; OB_SUCC(ret) && i < name.length(); ++i) {
+    if (name[i] == '`') {
+      OZ (sql.append("`"));
+    }
+    OZ (sql.append(name.ptr() + i, 1));
+  }
+  OZ (sql.append("`"));
+  return ret;
+}
+
+int execute_ai_column_retry(ObExecContext &ctx, ObAlterTableStmt &stmt)
+{
+  int ret = OB_SUCCESS;
+  ObSQLSessionInfo *session = ctx.get_my_session();
+  const uint64_t table_id = stmt.get_alter_table_schema().get_table_id();
+  const uint64_t column_id = stmt.get_retry_ai_column_id();
+  const ObTableSchema *table = nullptr;
+  const ObColumnSchemaV2 *column = nullptr;
+  CK (OB_NOT_NULL(session), OB_NOT_NULL(ctx.get_sql_ctx()), OB_NOT_NULL(ctx.get_sql_ctx()->schema_guard_));
+  OZ (ctx.get_sql_ctx()->schema_guard_->get_table_schema(table_id, table));
+  CK (OB_NOT_NULL(table));
+  OX (column = table->get_column_schema(column_id));
+  CK (OB_NOT_NULL(column), column->is_ai_result_column());
+
+  ObSqlString sql;
+  char state[64];
+  char request[64];
+  OZ (ObColumnSchemaV2::ai_column_companion_name(state, sizeof(state), column_id, 0));
+  OZ (ObColumnSchemaV2::ai_column_companion_name(request, sizeof(request), column_id, 1));
+  OZ (sql.append("UPDATE /*+ use_plan_cache(none) */ "));
+  OZ (append_ai_retry_identifier(sql, stmt.get_org_database_name()));
+  OZ (sql.append("."));
+  OZ (append_ai_retry_identifier(sql, stmt.get_org_table_name()));
+  OZ (sql.append(" SET "));
+  OZ (append_ai_retry_identifier(sql, column->get_column_name_str()));
+  // Changing the request marker forces an UPDATE even for an already pending row.
+  OZ (sql.append_fmt("=NULL,`%s`=0,`%s`=UUID() ", state, request));
+  OZ (sql.append(stmt.get_retry_ai_where()));
+
+  common::sqlclient::ObISQLConnectionGuard connection;
+  OZ (query::ObInnerSQLConnectionAccess::create_connection_with_external_session(session, connection));
+  CK (OB_NOT_NULL(connection.get_ptr()));
+  if (OB_SUCC(ret)) {
+    ObDMLService::AiRetryGuard retry_guard(table_id, column_id);
+    const ObSessionDDLInfo saved = session->get_ddl_info();
+    session->get_ddl_info().set_ai_column_writeback(true);
+    int64_t affected = 0;
+    ret = connection.get_ptr()->execute_write(sql.string(), affected);
+    session->set_ddl_info(saved);
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
 {
   int ret = OB_SUCCESS;
@@ -762,6 +824,8 @@ int ObAlterTableExecutor::execute(ObExecContext &ctx, ObAlterTableStmt &stmt)
   OV (OB_NOT_NULL(task_exec_ctx = GET_SQL_EXECUTOR_CTX(ctx)), OB_NOT_INIT);
   if (OB_FAIL(ret)) {
     // do nothing
+  } else if (stmt.get_retry_ai_column_id() != OB_INVALID_ID) {
+    ret = execute_ai_column_retry(ctx, stmt);
   } else if (stmt.is_alter_triggers()) {
     if (stmt.get_tg_arg().trigger_infos_.count() > 0) {
       stmt.get_tg_arg().ddl_stmt_str_ = first_stmt;

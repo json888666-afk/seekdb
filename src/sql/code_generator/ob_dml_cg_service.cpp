@@ -15,6 +15,7 @@
  */
 
 #define USING_LOG_PREFIX SQL_CG
+#include "sql/engine/dml/ob_dml_service.h"
 #include "ob_dml_cg_service.h"
 #include "sql/code_generator/ob_static_engine_cg.h"
 #include "sql/engine/ob_physical_plan.h"
@@ -2109,7 +2110,8 @@ int ObDmlCgService::generate_dml_base_ctdef(ObLogicalOperator &op,
           index_dml_info.ref_table_id_, schema));
       CK (OB_NOT_NULL(schema));
       if (OB_SUCC(ret) &&
-          !op.get_plan()->get_optimizer_context().get_session_info()->get_ddl_info().is_ai_column_writeback()) {
+          (!op.get_plan()->get_optimizer_context().get_session_info()->get_ddl_info().is_ai_column_writeback() ||
+           ObDMLService::get_ai_retry_column(index_dml_info.ref_table_id_) != OB_INVALID_ID)) {
         for (auto it = schema->column_begin(); it != schema->column_end(); ++it) {
           if (*it != nullptr && (*it)->is_ai_result_column()) {
             dml_base_ctdef.das_base_ctdef_.has_ai_columns_ = true;

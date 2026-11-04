@@ -48,6 +48,29 @@ using namespace transaction;
 namespace sql
 {
 
+namespace {
+thread_local uint64_t ai_retry_table_id = OB_INVALID_ID;
+thread_local uint64_t ai_retry_column_id = OB_INVALID_ID;
+}
+
+ObDMLService::AiRetryGuard::AiRetryGuard(uint64_t table_id, uint64_t column_id)
+  : saved_table_id_(ai_retry_table_id), saved_column_id_(ai_retry_column_id)
+{
+  ai_retry_table_id = table_id;
+  ai_retry_column_id = column_id;
+}
+
+ObDMLService::AiRetryGuard::~AiRetryGuard()
+{
+  ai_retry_table_id = saved_table_id_;
+  ai_retry_column_id = saved_column_id_;
+}
+
+uint64_t ObDMLService::get_ai_retry_column(uint64_t table_id)
+{
+  return table_id == ai_retry_table_id ? ai_retry_column_id : OB_INVALID_ID;
+}
+
 bool ObDMLService::check_cascaded_reference(const ObExpr *expr, const ObExprPtrIArray &row)
 {
   bool bret = false;
@@ -2336,7 +2359,13 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
   OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
   OZ (guard.get_table_schema(das.index_tid_, table));
   CK (OB_NOT_NULL(table));
-  if (OB_SUCC(ret) && !deleting) {
+  const uint64_t retry_column_id = updating ? ObDMLService::get_ai_retry_column(das.index_tid_) : OB_INVALID_ID;
+  const bool manual_retry = retry_column_id != OB_INVALID_ID;
+  if (OB_SUCC(ret) && manual_retry) {
+    const auto *column = table->get_column_schema(retry_column_id);
+    CK (OB_NOT_NULL(column), column->is_ai_result_column());
+    OZ (columns.push_back(column));
+  } else if (OB_SUCC(ret) && !deleting) {
     OZ (find_ai_columns_to_refresh(*table, updating ? &static_cast<const ObUpdCtDef &>(dml) : nullptr,
                                    op.get_eval_ctx(), columns));
     if (OB_SUCC(ret) && columns.empty()) {
@@ -2385,7 +2414,7 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
         "WHERE table_id=%llu AND column_id IN (%s)",
         OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.index_tid_), ids.ptr()));
 
-    if (OB_SUCC(ret) && updating) {
+    if (OB_SUCC(ret) && updating && !manual_retry) {
       const schema::ObDatabaseSchema *db = nullptr;
       OZ (guard.get_database_schema(table->get_database_id(), db));
       CK (OB_NOT_NULL(db));
@@ -2418,7 +2447,7 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
   } else {
     const ObSessionDDLInfo saved = session->get_ddl_info();
     session->get_ddl_info().set_ai_column_writeback(true);
-    if (updating) {
+    if (updating && !manual_retry) {
       OZ (op.execute_write(invalidate_sql.ptr()));
     }
     if (!inserting) {
