@@ -104,7 +104,16 @@ public:
     alter_table_arg_.lock_session_create_ts_ = create_ts;
   }
   void set_lock_priority();
+  uint64_t get_retry_ai_column_id() const { return retry_ai_column_id_; }
+  const common::ObString &get_retry_ai_where() const { return retry_ai_where_; }
+  void set_retry_ai_column(uint64_t id, const common::ObString &where)
+  {
+    retry_ai_column_id_ = id;
+    retry_ai_where_ = where;
+  }
 private:
+  uint64_t retry_ai_column_id_ = common::OB_INVALID_ID;
+  common::ObString retry_ai_where_;
   obcall::ObAlterTableArg alter_table_arg_;
   bool is_comment_table_;
   bool is_alter_system_;

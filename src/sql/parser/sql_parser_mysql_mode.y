@@ -797,6 +797,7 @@ column_name
 {
   malloc_non_terminal_node($$, result->malloc_pool_, T_COLUMN_REF, 3, NULL, NULL, $1);
   dup_node_string($1, $$, result->malloc_pool_);
+  $$->sql_str_off_ = @1.first_column;
 #ifndef SQL_PARSER_COMPILATION
   lookup_pl_exec_symbol($$, result, @1.first_column, @1.last_column, false, false, false);
 #endif
@@ -14795,6 +14796,7 @@ opt_set table_option_list_space_seperated
   malloc_non_terminal_node($$, result->malloc_pool_, T_RETRY_AI_COLUMN, 2, $4, $5);
   if ($5 != NULL) {
     dup_expr_string($$, result, @5.first_column, @5.last_column);
+    $$->sql_str_off_ = @5.first_column;
   }
 }
 | CONVERT TO CHARACTER SET charset_name opt_collation

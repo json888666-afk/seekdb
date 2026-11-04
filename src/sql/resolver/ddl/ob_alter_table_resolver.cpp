@@ -344,6 +344,79 @@ int ObAlterTableResolver::check_alter_column_schemas_valid(ObAlterTableStmt &stm
   return ret;
 }
 
+namespace {
+
+int resolve_ai_column_retry(const ParseNode &action, const ObTableSchema &table,
+                            ObIAllocator &allocator, ObAlterTableStmt &stmt)
+{
+  int ret = OB_SUCCESS;
+  const ParseNode *target = action.children_[0];
+  const ParseNode *where = action.children_[1];
+  const ObColumnSchemaV2 *column = nullptr;
+  if (target == nullptr || target->type_ != T_COLUMN_REF || target->num_child_ != 3 ||
+      target->children_[0] != nullptr || target->children_[1] != nullptr ||
+      target->children_[2] == nullptr) {
+    ret = OB_NOT_SUPPORTED;
+  } else {
+    const auto &name = *target->children_[2];
+    column = table.get_column_schema(ObString(name.str_len_, name.str_value_));
+    if (column == nullptr || !column->is_ai_result_column()) {
+      ret = OB_NOT_SUPPORTED;
+    }
+  }
+
+  ObString predicate;
+  if (OB_SUCC(ret) && where != nullptr) {
+    ObSEArray<const ParseNode *, 16> expressions;
+    ObSEArray<int64_t, 8> substitutions;
+    const ObString text(action.str_len_, action.str_value_);
+    OZ (expressions.push_back(where->children_[0]));
+    for (int64_t i = 0; OB_SUCC(ret) && i < expressions.count(); ++i) {
+      const auto *node = expressions.at(i);
+      if (node == nullptr) {
+        ret = OB_ERR_UNEXPECTED;
+      } else if (node->type_ == T_SELECT || node->type_ == T_REF_QUERY || node->type_ == T_QUESTIONMARK) {
+        ret = OB_NOT_SUPPORTED;
+      } else if (node->type_ == T_COLUMN_REF && node->num_child_ == 3 &&
+                 node->children_[0] == nullptr && node->children_[1] == nullptr) {
+        const int64_t offset = node->sql_str_off_ - action.sql_str_off_;
+        // A quoted identifier starts with its quote in the source text.
+        if (offset >= 0 && offset + 6 <= text.length() && node->str_len_ == 6 &&
+            ObString(6, text.ptr() + offset).case_compare("status") == 0) {
+          OZ (substitutions.push_back(offset));
+        }
+      } else {
+        for (int64_t j = 0; OB_SUCC(ret) && j < node->num_child_; ++j) {
+          if (node->children_[j] != nullptr) {
+            OZ (expressions.push_back(node->children_[j]));
+          }
+        }
+      }
+    }
+    lib::ob_sort(substitutions.begin(), substitutions.end());
+    ObSqlString sql;
+    char state_name[64];
+    OZ (ObColumnSchemaV2::ai_column_companion_name(state_name, sizeof(state_name),
+                                                   column->get_column_id(), 0));
+    int64_t copied = 0;
+    for (int64_t i = 0; OB_SUCC(ret) && i < substitutions.count(); ++i) {
+      const int64_t offset = substitutions.at(i);
+      OZ (sql.append(text.ptr() + copied, offset - copied));
+      OZ (sql.append_fmt("(CASE `%s` WHEN 1 THEN 'READY' WHEN 2 THEN 'FAILED' ELSE 'PENDING' END)",
+                         state_name));
+      copied = offset + 6;
+    }
+    OZ (sql.append(text.ptr() + copied, text.length() - copied));
+    OZ (ob_write_string(allocator, sql.string(), predicate));
+  }
+  if (OB_SUCC(ret)) {
+    stmt.set_retry_ai_column(column->get_column_id(), predicate);
+  }
+  return ret;
+}
+
+} // namespace
+
 int ObAlterTableResolver::resolve_action_list(const ParseNode &node)
 {
   int ret = OB_SUCCESS;
@@ -358,6 +431,13 @@ int ObAlterTableResolver::resolve_action_list(const ParseNode &node)
     ret = OB_ERR_UNEXPECTED;
     SQL_RESV_LOG(WARN, "alter table stmt should not be null", K(ret));
   } else {
+    for (int64_t i = 0; i < node.num_child_; ++i) {
+      if (node.children_[i] != nullptr && node.children_[i]->type_ == T_RETRY_AI_COLUMN) {
+        return node.num_child_ == 1 ?
+            resolve_ai_column_retry(*node.children_[i], *table_schema_, *allocator_, *alter_table_stmt) :
+            OB_NOT_SUPPORTED;
+      }
+    }
     // Get the existing index name in the table, and initialize current_index_name_set_
     ObSEArray<ObAuxTableMetaInfo, 16> simple_index_infos;
     // drop_col_act_position_list is only used in mysql mode
