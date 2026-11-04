@@ -2511,6 +2511,7 @@ def_table_schema(
     ],
     normal_columns=[
         ('row_key', 'varbinary:OB_MAX_DEFAULT_VALUE_LENGTH', 'false'),
+        ('rowkey_predicate', 'varchar:OB_MAX_DEFAULT_VALUE_LENGTH', 'false'),
         ('definition_version', 'int', 'false'),
         ('eligible_ts', 'timestamp:6', 'false'),
         ('state', 'int', 'false', 0),

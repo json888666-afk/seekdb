@@ -23,6 +23,7 @@
 #include "sql/engine/dml/ob_dml_service.h"
 #include "sql/engine/expr/ob_datum_cast.h"
 #include "share/rc/ob_server_runtime.h"
+#include "share/schema/ob_multi_version_schema_service.h"
 #include "sql/das/ob_das_insert_op.h"
 #include "sql/das/ob_das_delete_op.h"
 #include "sql/das/ob_das_update_op.h"
@@ -2129,6 +2130,48 @@ int ObDMLService::get_nested_delete_ctx(const uint64_t table_id,
 
 namespace {
 
+int build_ai_rowkey_predicate(ObTableModifyOp &op,
+                              const uint64_t table_id,
+                              const ObIArray<ObObj> &cells,
+                              ObIAllocator &allocator,
+                              ObSqlString &predicate)
+{
+  int ret = OB_SUCCESS;
+  ObSQLSessionInfo *session = op.get_exec_ctx().get_my_session();
+  schema::ObSchemaGetterGuard guard;
+  const schema::ObTableSchema *table = nullptr;
+  CK (OB_NOT_NULL(session), OB_NOT_NULL(GCTX.schema_service_));
+  OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
+  OZ (guard.get_table_schema(table_id, table));
+  CK (OB_NOT_NULL(table));
+  for (int64_t i = 0; OB_SUCC(ret) && i < cells.count(); ++i) {
+    uint64_t column_id = OB_INVALID_ID;
+    const schema::ObColumnSchemaV2 *column = nullptr;
+    OZ (table->get_rowkey_info().get_column_id(i, column_id));
+    OX (column = table->get_column_schema(column_id));
+    CK (OB_NOT_NULL(column));
+    if (OB_SUCC(ret)) {
+      const ObString &name = column->get_column_name_str();
+      OZ (predicate.append(i == 0 ? "`" : " AND `"));
+      for (int64_t j = 0; OB_SUCC(ret) && j < name.length(); ++j) {
+        if (name[j] == '`') {
+          OZ (predicate.append("`"));
+        }
+        OZ (predicate.append(name.ptr() + j, 1));
+      }
+      OZ (predicate.append("` = "));
+      int64_t length = 128;
+      int64_t pos = 0;
+      char *literal = static_cast<char *>(allocator.alloc(length));
+      CK (OB_NOT_NULL(literal));
+      OZ (cells.at(i).print_sql_literal(literal, length, pos, allocator,
+                                      session->create_obj_print_params()));
+      OZ (predicate.append(literal, pos));
+    }
+  }
+  return ret;
+}
+
 int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEventType event)
 {
   int ret = OB_SUCCESS;
@@ -2175,12 +2218,16 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
         ret = OB_ALLOCATE_MEMORY_FAILED;
       } else if (OB_FAIL(row_key.serialize(data, size, pos))) {
       } else if (inserting) {
+        ObSqlString predicate;
+        OZ (build_ai_rowkey_predicate(op, das.table_id_, key_cells, key_allocator, predicate));
         char request[UuidCommon::LENGTH_UUID + 1] = {};
         OZ (ObExprUuid::gen_server_uuid(request, UuidCommon::LENGTH_UUID));
         OZ (sql.append_fmt("INSERT INTO oceanbase.%s "
-            "(table_id, request_id, column_id, row_key, definition_version, eligible_ts) "
+            "(table_id, request_id, column_id, row_key, rowkey_predicate, definition_version, eligible_ts) "
             "SELECT table_id, '%s', column_id, ", OB_ALL_AI_COLUMN_TASK_TNAME, request));
         OZ (sql_append_hex_escape_str(ObString(pos, data), sql));
+        OZ (sql.append(", "));
+        OZ (sql_append_hex_escape_str(predicate.string(), sql));
         OZ (sql.append_fmt(", definition_version, NOW(6) FROM oceanbase.%s WHERE table_id=%llu",
             OB_ALL_AI_COLUMN_TNAME, static_cast<unsigned long long>(das.table_id_)));
       } else {
