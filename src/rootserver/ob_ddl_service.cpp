@@ -7836,7 +7836,12 @@ int ObDDLService::add_new_column_to_table_schema(
           OX (companion.set_data_type(slot == 0 ? ObIntType : ObVarcharType));
           OX (companion.set_charset_type(slot == 0 ? CHARSET_BINARY : CHARSET_UTF8MB4));
           OX (companion.set_collation_type(slot == 0 ? CS_TYPE_BINARY : CS_TYPE_UTF8MB4_BIN));
-          if (slot != 0) {
+          if (slot == 0) {
+            ObObj pending;
+            pending.set_int(0);
+            OZ (companion.set_cur_default_value(pending, false));
+            OZ (companion.set_orig_default_value(pending));
+          } else {
             OX (companion.set_data_length(slot == 1 ? 64 : 2048));
           }
           OZ (companion.set_column_name(name));
