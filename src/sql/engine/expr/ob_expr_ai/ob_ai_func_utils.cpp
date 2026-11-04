@@ -1756,17 +1756,12 @@ int ObAIFuncPromptObjectUtils::replace_all_str_args_in_template(ObIAllocator &al
             }
             
             if (valid_index && index >= 0 && static_cast<uint64_t>(index) < args_count) {
-              {
-                ObString arg_value = arg_strings.at(index);
-                
-                if (result_pos + arg_value.length() <= max_result_len) {
-                  MEMCPY(result_buf + result_pos, arg_value.ptr(), arg_value.length());
-                  result_pos += arg_value.length();
-                } else {
-                  ret = OB_BUF_NOT_ENOUGH;
-                }
+              const ObString &arg_value = arg_strings.at(index);
+              if (arg_value.length() <= max_result_len - result_pos) {
+                MEMCPY(result_buf + result_pos, arg_value.ptr(), arg_value.length());
+                result_pos += arg_value.length();
               } else {
-                //do nothing
+                ret = OB_BUF_NOT_ENOUGH;
               }
               
               i = end_pos;
