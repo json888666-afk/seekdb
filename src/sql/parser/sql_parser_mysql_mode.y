@@ -17770,7 +17770,7 @@ ACCOUNT
 |       JSON_ARRAYAGG
 |       JSON_OBJECTAGG
 |       JSON_QUERY
-|       JSON_TABLE
+|       JSON_TABLE %prec LOWER_PARENS
 |       KEYWORD
 |       KEY_BLOCK_SIZE
 |       KEY_VERSION
@@ -18129,7 +18129,7 @@ ACCOUNT
 |       UNCOMMITTED
 |       UNCONDITIONAL
 |       UNDEFINED
-|       UNNEST
+|       UNNEST %prec LOWER_PARENS
 |       UNICODE
 |       UNKNOWN
 |       UNLOCKED
@@ -18198,7 +18198,7 @@ ACCOUNT
 |       MICRO_INDEX_CLUSTERED
 |       INCONSISTENT 
 |       INDIVIDUAL
-|       HYBRID_SEARCH
+|       HYBRID_SEARCH %prec LOWER_PARENS
 ;
 
 unreserved_keyword_special:
