@@ -36,6 +36,15 @@ public:
                                 ObExprResType *types_array,
                                 int64_t param_num,
                                 common::ObExprTypeCtx &type_ctx) const override;
+  class DimensionGuard
+  {
+  public:
+    explicit DimensionGuard(int64_t dimension);
+    ~DimensionGuard();
+  private:
+    int64_t previous_;
+    DISALLOW_COPY_AND_ASSIGN(DimensionGuard);
+  };
   static int eval_ai_embed(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &res);
   static int eval_ai_embed_batch(BATCH_EVAL_FUNC_ARG_DECL);
   virtual int cg_expr(ObExprCGCtx &expr_cg_ctx,

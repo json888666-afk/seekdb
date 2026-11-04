@@ -76,6 +76,21 @@ int ObExprAIEmbed::calc_result_typeN(ObExprResType &type,
   return ret;
 }
 
+namespace {
+thread_local int64_t ai_column_embedding_dimension = 0;
+}
+
+ObExprAIEmbed::DimensionGuard::DimensionGuard(int64_t dimension)
+  : previous_(ai_column_embedding_dimension)
+{
+  ai_column_embedding_dimension = dimension;
+}
+
+ObExprAIEmbed::DimensionGuard::~DimensionGuard()
+{
+  ai_column_embedding_dimension = previous_;
+}
+
 int ObExprAIEmbed::eval_ai_embed(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &res) 
 {
   INIT_SUCC(ret);
@@ -115,8 +130,9 @@ int ObExprAIEmbed::eval_ai_embed(const ObExpr &expr, ObEvalCtx &ctx, ObDatum &re
     ObJsonInt *dim_json = nullptr;
     ObJsonObject *config = nullptr;
     if (OB_FAIL(ret)) {
-    } else if (OB_NOT_NULL(arg_dim)) {
-      dim = arg_dim->is_null() ? 0 : arg_dim->get_int();
+    } else if (OB_NOT_NULL(arg_dim) || ai_column_embedding_dimension > 0) {
+      dim = arg_dim == nullptr ? ai_column_embedding_dimension :
+            (arg_dim->is_null() ? 0 : arg_dim->get_int());
       if (dim <= 0) {
         ret = OB_INVALID_ARGUMENT;
         LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_embed, dimension parameter must be a positive integer");
@@ -221,7 +237,7 @@ int ObExprAIEmbed::eval_ai_embed_batch(BATCH_EVAL_FUNC_ARG_DECL)
       LOG_USER_ERROR(OB_INVALID_ARGUMENT, "ai_embed, dimension parameter must be a positive integer");
     } else {
       const ObString model = model_id->get_string();
-      const int64_t dimension = OB_ISNULL(dim) ? 0 : dim->get_int();
+      const int64_t dimension = OB_ISNULL(dim) ? ai_column_embedding_dimension : dim->get_int();
       if (!contents.empty()
           && (group_model != model || group_dim != dimension || contents.count() == max_request_rows)
           && OB_FAIL(flush())) {

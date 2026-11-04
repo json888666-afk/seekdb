@@ -26,6 +26,8 @@
 #include "sql/session/ob_sql_session_info.h"
 #include "sql/engine/ob_exec_context.h"
 #include "sql/engine/expr/ob_expr_ai/ob_expr_ai_complete.h"
+#include "sql/engine/expr/ob_expr_ai/ob_expr_ai_embed.h"
+#include <limits>
 
 using namespace oceanbase::share;
 using namespace oceanbase::common;
@@ -99,7 +101,12 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
       const auto &prompt = rule["system_prompt"];
       system_prompt.assign_ptr(prompt.GetString(), prompt.GetStringLength());
     }
+    int64_t dimension = 0;
+    if (rule.HasMember("embedding_dimension") && rule["embedding_dimension"].IsInt64()) {
+      dimension = rule["embedding_dimension"].GetInt64();
+    }
     sql::ObExprAIComplete::SystemPromptGuard prompt_guard(system_prompt);
+    sql::ObExprAIEmbed::DimensionGuard dimension_guard(dimension);
     OZ (sql.append("SELECT /*+ parallel(1) */ CAST(("));
     OZ (sql.append(expr.GetString(), expr.GetStringLength()));
     OZ (sql.append_fmt(") AS CHAR) AS ai_value FROM %.*s WHERE %.*s",
@@ -111,8 +118,22 @@ int read_ai_column_value(ObISQLClient &proxy, ObIAllocator &allocator,
     OZ (row->next());
     ObString text;
     OZ (row->get_varchar("ai_value", text));
-    if (OB_SUCC(ret) && (result_type.is_json() || result_type.is_numeric_type() ||
-                        ob_is_decimal_int(result_type.get_type()))) {
+    if (OB_SUCC(ret) && dimension > 0) {
+      rapidjson::Document vector;
+      vector.Parse(text.ptr(), text.length());
+      if (vector.HasParseError() || !vector.IsArray() ||
+          vector.Size() != static_cast<uint64_t>(dimension)) {
+        ret = OB_INVALID_DATA;
+      } else {
+        constexpr double max_element = std::numeric_limits<float>::max();
+        for (auto i = vector.Begin(); OB_SUCC(ret) && i != vector.End(); ++i) {
+          if (!i->IsNumber() || i->GetDouble() < -max_element || i->GetDouble() > max_element) {
+            ret = OB_INVALID_DATA;
+          }
+        }
+      }
+    } else if (OB_SUCC(ret) && (result_type.is_json() || result_type.is_numeric_type() ||
+                               ob_is_decimal_int(result_type.get_type()))) {
       rapidjson::Document typed;
       typed.Parse(text.ptr(), text.length());
       if (typed.HasParseError() ||
