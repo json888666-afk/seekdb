@@ -3964,7 +3964,10 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
             T_COLUMN_REF != opt->children_[0]->type_ || opt->children_[0]->num_child_ != 3 ||
             OB_NOT_NULL(opt->children_[0]->children_[0]) || OB_NOT_NULL(opt->children_[0]->children_[1]) ||
             OB_ISNULL(opt->children_[0]->children_[2])) {
-          ret = OB_ERR_PARSER_SYNTAX;
+          ret = OB_ERR_PARSE_SQL;
+          const char *text = opt == nullptr || opt->raw_text_ == nullptr ? "" : opt->raw_text_;
+          const int32_t text_len = opt == nullptr || opt->raw_text_ == nullptr ? 0 : opt->text_len_;
+          LOG_USER_ERROR(OB_ERR_PARSE_SQL, ob_errpkt_strerror(OB_ERR_PARSER_SYNTAX), text_len, text, 1);
         } else {
           const ParseNode *key_node = opt->children_[0]->children_[2];
           const ParseNode *val = opt->children_[1];
@@ -4040,8 +4043,11 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
         ColumnItem *column = nullptr;
         const auto &name = columns[i].name;
         OZ (ob_write_string(*allocator_, ObString(name.size(), name.data()), column_name));
-        OZ (resolve_function_table_column_item(*item, meta,
-                 ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()],
+        ObAccuracy accuracy = ObAccuracy::DDL_DEFAULT_ACCURACY[meta.get_type()];
+        if (meta.get_type() == ObDateTimeType) {
+          accuracy.set_scale(0);
+        }
+        OZ (resolve_function_table_column_item(*item, meta, accuracy,
                  column_name, OB_APP_MIN_COLUMN_ID + i, column));
       }
       if (OB_SUCC(ret)) {

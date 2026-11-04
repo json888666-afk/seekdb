@@ -5532,6 +5532,9 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (mark_expr_self_produced(col_item->expr_));
         OZ (generate_rt_expr(*col_item->expr_, rt_expr));
         OZ (spec.column_exprs_.push_back(rt_expr));
+        if (OB_SUCC(ret) && spec.file_sql_column_count_ > 0) {
+          OZ (spec.file_sql_source_columns_.push_back(col_item->column_id_ - OB_APP_MIN_COLUMN_ID));
+        }
       }
     }
   }
