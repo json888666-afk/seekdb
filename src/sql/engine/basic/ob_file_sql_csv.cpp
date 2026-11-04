@@ -257,6 +257,9 @@ bool read_json_line(std::istream &input, JsonRow &row)
     std::unordered_set<std::string> names;
     for (auto member = object.MemberBegin(); member != object.MemberEnd(); ++member) {
       const auto &value = member->value;
+      if (value.IsObject() || value.IsArray()) {
+        throw std::invalid_argument("nested JSON values are not supported in FileSQL");
+      }
       std::string name(member->name.GetString(), member->name.GetStringLength());
       if (name.empty() || name.find('\0') != std::string::npos || !names.insert(lower_ascii(name)).second) {
         throw std::invalid_argument("invalid or duplicate JSON column name");

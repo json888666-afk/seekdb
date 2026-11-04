@@ -3953,6 +3953,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       ret = OB_ERR_PARSER_SYNTAX;
     } else if (0 != ObString(name->str_len_, name->str_value_).case_compare("read_csv") &&
                0 != ObString(name->str_len_, name->str_value_).case_compare("read_json") &&
+               0 != ObString(name->str_len_, name->str_value_).case_compare("read_ndjson") &&
                0 != ObString(name->str_len_, name->str_value_).case_compare("glob") &&
                0 != ObString(name->str_len_, name->str_value_).case_compare("read_parquet")) {
       ret = OB_NOT_SUPPORTED;
@@ -3960,7 +3961,8 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
     } else if (OB_ISNULL(args->children_[0]) || T_VARCHAR != args->children_[0]->type_) {
       ret = OB_ERR_PARSER_SYNTAX;
     } else {
-      json_lines = 0 == ObString(name->str_len_, name->str_value_).case_compare("read_json");
+      json_lines = 0 == ObString(name->str_len_, name->str_value_).case_compare("read_json") ||
+                   0 == ObString(name->str_len_, name->str_value_).case_compare("read_ndjson");
       glob = 0 == ObString(name->str_len_, name->str_value_).case_compare("glob");
       parquet = 0 == ObString(name->str_len_, name->str_value_).case_compare("read_parquet");
       if ((glob || parquet) && args->num_child_ != 1) {
