@@ -46,20 +46,33 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_, file_sql_parquet_);
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_, file_sql_glob_, file_sql_parquet_, file_sql_snapshot_);
 
 #ifdef __linux__
 namespace {
 
+std::string file_sql_snapshot(const struct stat &st)
+{
+  return std::to_string(st.st_dev) + ":" + std::to_string(st.st_ino) + ":" +
+         std::to_string(st.st_size) + ":" + std::to_string(st.st_mtim.tv_sec) + ":" +
+         std::to_string(st.st_mtim.tv_nsec) + ":" + std::to_string(st.st_ctim.tv_sec) + ":" +
+         std::to_string(st.st_ctim.tv_nsec);
+}
+
 class FileSqlInputBuffer : public std::streambuf
 {
 public:
-  explicit FileSqlInputBuffer(FILE *file) : file_(file, &std::fclose) {}
+  FileSqlInputBuffer(FILE *file, std::string snapshot)
+    : file_(file, &std::fclose), snapshot_(std::move(snapshot)) {}
 private:
   int_type underflow() override
   {
     if (gptr() != egptr()) {
       return traits_type::to_int_type(*gptr());
+    }
+    struct stat current {};
+    if (::fstat(::fileno(file_.get()), &current) != 0 || file_sql_snapshot(current) != snapshot_) {
+      throw std::runtime_error("file changed during FileSQL scan");
     }
     const size_t count = std::fread(buffer_, 1, sizeof(buffer_), file_.get());
     if (count == 0) {
@@ -73,13 +86,15 @@ private:
   }
 
   std::unique_ptr<FILE, decltype(&std::fclose)> file_;
+  std::string snapshot_;
   char buffer_[8192];
 };
 
 class FileSqlInputStream : public std::istream
 {
 public:
-  explicit FileSqlInputStream(FILE *file) : std::istream(nullptr), buffer_(file)
+  FileSqlInputStream(FILE *file, std::string snapshot)
+    : std::istream(nullptr), buffer_(file, std::move(snapshot))
   {
     rdbuf(&buffer_);
   }
@@ -195,7 +210,8 @@ bool file_is_within(const std::filesystem::path &root, const std::filesystem::pa
 int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
                              std::unique_ptr<std::istream> &input, bool parquet,
                              std::vector<file_sql::CsvColumn> *schema,
-                             const int64_t *projection, int64_t projection_count)
+                             const int64_t *projection, int64_t projection_count,
+                             std::string *snapshot, const ObString *expected)
 {
   int ret = OB_SUCCESS;
   bool enabled = false;
@@ -238,16 +254,25 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
               const fs::path resolved = fs::canonical(proc_path, ec);
               if (ec || !file_is_within(root, resolved)) {
                 ret = OB_ERR_NO_PRIVILEGE;
-              } else if (parquet) {
-                ret = open_file_sql_parquet(proc_path, input, schema, projection, projection_count);
               } else {
-                std::unique_ptr<FILE, decltype(&std::fclose)> file(
-                    std::fopen(proc_path.c_str(), "rb"), &std::fclose);
-                if (!file) {
-                  ret = OB_FILE_NOT_EXIST;
+                auto fingerprint = file_sql_snapshot(st);
+                if (snapshot != nullptr) {
+                  *snapshot = fingerprint;
+                }
+                if (expected != nullptr && *expected != ObString(fingerprint.size(), fingerprint.data())) {
+                  ret = OB_INVALID_ARGUMENT;
+                  LOG_USER_ERROR(OB_INVALID_ARGUMENT, "file changed since FileSQL schema inference");
+                } else if (parquet) {
+                  ret = open_file_sql_parquet(proc_path, input, schema, projection, projection_count);
                 } else {
-                  input = std::make_unique<FileSqlInputStream>(file.get());
-                  file.release();
+                  std::unique_ptr<FILE, decltype(&std::fclose)> file(
+                      std::fopen(proc_path.c_str(), "rb"), &std::fclose);
+                  if (!file) {
+                    ret = OB_FILE_NOT_EXIST;
+                  } else {
+                    input = std::make_unique<FileSqlInputStream>(file.get(), std::move(fingerprint));
+                    file.release();
+                  }
                 }
               }
             }
@@ -264,6 +289,8 @@ int file_sql::open_local_csv(ObSQLSessionInfo &session, const ObString &path,
     UNUSED(schema);
     UNUSED(projection);
     UNUSED(projection_count);
+    UNUSED(snapshot);
+    UNUSED(expected);
     ret = OB_NOT_SUPPORTED;
     LOG_USER_ERROR(OB_NOT_SUPPORTED, "FileSQL on this platform");
 #endif
@@ -377,7 +404,8 @@ int ObFunctionTableOp::open_csv()
   } else if (OB_FAIL(file_sql::open_local_csv(*session, value->get_string(), csv_input_, MY_SPEC.file_sql_parquet_,
                                                 nullptr, MY_SPEC.file_sql_source_columns_.empty() ? nullptr :
                                                     &MY_SPEC.file_sql_source_columns_.at(0),
-                                                MY_SPEC.file_sql_source_columns_.count()))) {
+                                                MY_SPEC.file_sql_source_columns_.count(), nullptr,
+                                                &MY_SPEC.file_sql_snapshot_))) {
   } else if (MY_SPEC.file_sql_csv_header_) {
     try {
       if (!file_sql::CsvReader(*csv_input_).next(csv_row_) ||

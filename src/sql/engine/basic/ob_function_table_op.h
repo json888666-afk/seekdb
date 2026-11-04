@@ -44,6 +44,7 @@ public:
   bool file_sql_json_lines_ = false;
   bool file_sql_glob_ = false;
   bool file_sql_parquet_ = false;
+  common::ObString file_sql_snapshot_;
   bool has_correlated_expr_;
 };
 

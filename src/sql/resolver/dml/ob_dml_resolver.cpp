@@ -3943,6 +3943,7 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
   bool parquet = false;
   ObString path;
   std::unique_ptr<std::istream> stream;
+  std::string snapshot;
   std::vector<file_sql::CsvColumn> columns;
   CK (OB_NOT_NULL(stmt), OB_NOT_NULL(allocator_), OB_NOT_NULL(session_info_), OB_NOT_NULL(params_.expr_factory_));
   CK (3 == node.num_child_);
@@ -4015,10 +4016,10 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       header = false;
     }
   } else if (OB_SUCC(ret) && parquet) {
-    OZ (file_sql::open_local_csv(*session_info_, path, stream, true, &columns));
+    OZ (file_sql::open_local_csv(*session_info_, path, stream, true, &columns, nullptr, -1, &snapshot));
     header = false;
   } else {
-    OZ (file_sql::open_local_csv(*session_info_, path, stream));
+    OZ (file_sql::open_local_csv(*session_info_, path, stream, false, nullptr, nullptr, -1, &snapshot));
   }
   if (OB_SUCC(ret) && !glob && !parquet) {
     try {
@@ -4060,6 +4061,9 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
       item->file_sql_json_lines_ = json_lines;
       item->file_sql_glob_ = glob;
       item->file_sql_parquet_ = parquet;
+      if (!snapshot.empty()) {
+        OZ (ob_write_string(*allocator_, ObString(snapshot.size(), snapshot.data()), item->file_sql_snapshot_));
+      }
       OZ (stmt->add_table_item(session_info_, item));
       for (size_t i = 0; OB_SUCC(ret) && i < columns.size(); ++i) {
         ObObjMeta meta;
