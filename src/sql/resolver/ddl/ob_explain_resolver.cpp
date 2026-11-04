@@ -17,6 +17,9 @@
 #define USING_LOG_PREFIX SQL_RESV
 #include "sql/resolver/ddl/ob_explain_resolver.h"
 #include "sql/resolver/ob_resolver.h"
+#include "sql/resolver/dml/ob_select_stmt.h"
+#include "sql/parser/ob_parser.h"
+#include "lib/utility/utility.h"
 
 using namespace oceanbase;
 using namespace sql;
@@ -26,6 +29,52 @@ const static int64_t EXPLAIN_DISPLAY_OPTION = 1;
 const static int64_t EXPLAIN_INTO_TABLE = 2;
 const static int64_t EXPLAIN_STMT_ID = 3;
 const static int64_t EXPLAIN_CHILD_STMT = 4;
+namespace {
+const char *file_sql_describe_type(const ObObjType type)
+{
+  switch (type) {
+    case ObIntType: return "BIGINT";
+    case ObDoubleType: return "DOUBLE";
+    case ObTinyIntType: return "BOOLEAN";
+    case ObDateType: return "DATE";
+    case ObDateTimeType: return "DATETIME";
+    case ObVarcharType: return "VARCHAR";
+    default: return ob_obj_type_str(type);
+  }
+}
+
+int resolve_file_sql_describe(ObResolverParams &params, const ObSelectStmt &query, ObStmt *&stmt)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString sql;
+  for (int64_t i = 0; OB_SUCC(ret) && i < query.get_select_item_size(); ++i) {
+    const auto &item = query.get_select_item(i);
+    if (OB_ISNULL(item.expr_)) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(sql.append(i == 0 ? "SELECT CONVERT(" : " UNION ALL SELECT CONVERT("))) {
+    } else if (OB_FAIL(sql_append_hex_escape_str(item.alias_name_, sql))) {
+    } else if (OB_FAIL(sql.append_fmt(
+        " USING utf8mb4) AS column_name, '%s' AS column_type, '%s' AS `null`, "
+        "NULL AS `key`, NULL AS `default`, NULL AS extra",
+        file_sql_describe_type(item.expr_->get_data_type()),
+        (item.expr_->get_result_type().get_result_flag() & NOT_NULL_FLAG) != 0 ? "NO" : "YES"))) {
+    }
+  }
+  if (OB_SUCC(ret)) {
+    ObParser parser(*params.allocator_, params.session_info_->get_sql_mode());
+    ParseResult parsed;
+    ObResolver resolver(params);
+    if (OB_FAIL(parser.parse(sql.string(), parsed))) {
+    } else if (OB_ISNULL(parsed.result_tree_) || OB_ISNULL(parsed.result_tree_->children_[0])) {
+      ret = OB_ERR_UNEXPECTED;
+    } else if (OB_FAIL(resolver.resolve(ObResolver::IS_NOT_PREPARED_STMT,
+                                       *parsed.result_tree_->children_[0], stmt))) {
+    }
+  }
+  return ret;
+}
+} // namespace
+
 int ObExplainResolver::resolve(const ParseNode &parse_tree)
 {
   int ret = OB_SUCCESS;
@@ -62,6 +111,15 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
       } else if (OB_ISNULL(child_stmt)) {
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("failed to generate stmt for child stmt");
+      } else if (parse_tree.value_ != 0 && child_stmt->is_select_stmt() &&
+                 static_cast<ObSelectStmt *>(child_stmt)->get_table_size() == 1 &&
+                 static_cast<ObSelectStmt *>(child_stmt)->get_table_item(0)->file_sql_column_count_ > 0) {
+        ObStmt *description = nullptr;
+        if (OB_FAIL(resolve_file_sql_describe(params_, *static_cast<ObSelectStmt *>(child_stmt), description))) {
+        } else {
+          set_basic_stmt(description);
+        }
+        return ret;
       } else {
         explain_stmt->set_explain_query_stmt(static_cast<ObDMLStmt *>(child_stmt));
         ParseNode *format = parse_tree.children_[EXPLAIN_FORMAT];

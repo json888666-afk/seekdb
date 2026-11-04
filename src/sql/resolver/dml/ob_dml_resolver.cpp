@@ -4073,6 +4073,9 @@ int ObDMLResolver::resolve_csv_table_item(const ParseNode &node, TableItem *&tab
         }
         OZ (resolve_function_table_column_item(*item, meta, accuracy,
                  column_name, OB_APP_MIN_COLUMN_ID + i, column));
+        if (OB_SUCC(ret) && !columns[i].nullable) {
+          column->expr_->set_result_flag(NOT_NULL_FLAG);
+        }
       }
       if (OB_SUCC(ret)) {
         // Schema inference depends on current file contents, so never cache the plan.
