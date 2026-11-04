@@ -33,13 +33,15 @@ class ObFunctionTableSpec : public ObOpSpec
 OB_UNIS_VERSION_V(1);
 public:
   ObFunctionTableSpec(common::ObIAllocator &alloc, const ObPhyOperatorType type)
-    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), file_sql_source_columns_(alloc), has_correlated_expr_(false)
+    : ObOpSpec(alloc, type), value_expr_(nullptr), column_exprs_(alloc), file_sql_source_columns_(alloc), file_sql_json_names_(alloc), has_correlated_expr_(false)
   {}
   ObExpr *value_expr_;
   common::ObFixedArray<ObExpr*, common::ObIAllocator> column_exprs_;
   common::ObFixedArray<int64_t, common::ObIAllocator> file_sql_source_columns_;
+  common::ObFixedArray<common::ObString, common::ObIAllocator> file_sql_json_names_;
   int64_t file_sql_column_count_ = 0;
   bool file_sql_csv_header_ = true;
+  bool file_sql_json_lines_ = false;
   bool has_correlated_expr_;
 };
 
@@ -67,6 +69,7 @@ private:
   int inner_get_next_row_udf();
   std::unique_ptr<std::istream> csv_input_;
   file_sql::CsvRow csv_row_;
+  file_sql::JsonRow json_row_;
   int inner_get_next_row_sys_func();
   int get_current_result(common::ObObj &result);
   int64_t node_idx_;

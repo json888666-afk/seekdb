@@ -5514,6 +5514,11 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
       spec.file_sql_column_count_ = item->file_sql_column_count_;
       spec.file_sql_csv_header_ = item->file_sql_csv_header_;
       OZ (spec.file_sql_source_columns_.init(op.get_stmt()->get_column_size()));
+      spec.file_sql_json_lines_ = item->file_sql_json_lines_;
+      if (spec.file_sql_json_lines_) {
+        spec.file_sql_csv_header_ = false;
+        OZ (spec.file_sql_json_names_.init(op.get_stmt()->get_column_size()));
+      }
     }
     spec.has_correlated_expr_ = value_raw_expr->has_flag(CNT_DYNAMIC_PARAM);
     spec.value_expr_ = value_expr;
@@ -5534,6 +5539,11 @@ int ObStaticEngineCG::generate_spec(ObLogFunctionTable &op, ObFunctionTableSpec 
         OZ (spec.column_exprs_.push_back(rt_expr));
         if (OB_SUCC(ret) && spec.file_sql_column_count_ > 0) {
           OZ (spec.file_sql_source_columns_.push_back(col_item->column_id_ - OB_APP_MIN_COLUMN_ID));
+          if (item->file_sql_json_lines_) {
+            ObString name;
+            OZ (ob_write_string(alloc, col_item->column_name_, name));
+            OZ (spec.file_sql_json_names_.push_back(name));
+          }
         }
       }
     }

@@ -45,7 +45,7 @@ namespace sql
 {
 
 OB_SERIALIZE_MEMBER((ObFunctionTableSpec, ObOpSpec), value_expr_, column_exprs_, has_correlated_expr_,
-                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_);
+                    file_sql_source_columns_, file_sql_column_count_, file_sql_csv_header_, file_sql_json_lines_, file_sql_json_names_);
 
 #ifdef __linux__
 namespace {
@@ -219,9 +219,12 @@ int ObFunctionTableOp::inner_get_next_csv_row()
   } else if (OB_FAIL(ctx_.check_status())) {
   } else {
     try {
-      if (!file_sql::CsvReader(*csv_input_).next(csv_row_)) {
+      const bool json_lines = MY_SPEC.file_sql_json_lines_;
+      const bool has_row = json_lines ? file_sql::read_json_line(*csv_input_, json_row_) :
+                                       file_sql::CsvReader(*csv_input_).next(csv_row_);
+      if (!has_row) {
         ret = OB_ITER_END;
-      } else if (csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {
+      } else if (!json_lines && csv_row_.size() != static_cast<size_t>(MY_SPEC.file_sql_column_count_)) {
         ret = OB_INVALID_ARGUMENT;
       }
       for (int64_t i = 0; OB_SUCC(ret) && i < MY_SPEC.column_exprs_.count(); ++i) {
@@ -231,7 +234,20 @@ int ObFunctionTableOp::inner_get_next_csv_row()
           ret = OB_ERR_UNEXPECTED;
           break;
         }
-        const auto &cell = csv_row_[index];
+        const file_sql::CsvCell missing{{}, true};
+        const file_sql::CsvCell *source = &missing;
+        if (json_lines) {
+          const auto &name = MY_SPEC.file_sql_json_names_.at(i);
+          for (const auto &field : json_row_) {
+            if (ObCharset::case_insensitive_equal(name, ObString(field.first.name.size(), field.first.name.data()))) {
+              source = &field.second;
+              break;
+            }
+          }
+        } else {
+          source = &csv_row_[index];
+        }
+        const auto &cell = *source;
         const ObString text(cell.text.size(), cell.text.data());
         auto &datum = expr->locate_datum_for_write(eval_ctx_);
         if (cell.is_null) {

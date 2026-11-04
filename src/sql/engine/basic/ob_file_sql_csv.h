@@ -20,6 +20,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace oceanbase {
 namespace common { class ObString; }
@@ -64,6 +65,10 @@ private:
 // Returns the schema in file order. A headerless scan uses column0, column1,
 // etc. Unquoted empty fields are NULL; quoted empty fields are empty strings.
 std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header);
+
+using JsonRow = std::vector<std::pair<CsvColumn, CsvCell>>;
+bool read_json_line(std::istream &input, JsonRow &row);
+std::vector<CsvColumn> infer_json_lines_schema(std::istream &input);
 
 } // namespace file_sql
 } // namespace sql

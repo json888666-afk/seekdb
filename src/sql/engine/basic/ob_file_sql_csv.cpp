@@ -22,7 +22,11 @@
 #include <locale>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <unordered_set>
+#include <rapidjson/document.h>
+#include <rapidjson/stringbuffer.h>
+#include <rapidjson/writer.h>
 #include <utility>
 
 namespace oceanbase {
@@ -231,6 +235,88 @@ std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header)
   for (auto &col : columns) {
     if (col.type == CsvType::UNKNOWN) {
       col.type = CsvType::VARCHAR;
+    }
+  }
+  return columns;
+}
+
+bool read_json_line(std::istream &input, JsonRow &row)
+{
+  std::string line;
+  while (std::getline(input, line)) {
+    if (line.find_first_not_of(" \t\r") == std::string::npos) {
+      continue;
+    }
+    rapidjson::Document object;
+    if (line.find('\0') != std::string::npos ||
+        object.Parse<rapidjson::kParseValidateEncodingFlag>(line.c_str()).HasParseError() ||
+        !object.IsObject()) {
+      throw std::invalid_argument("expected one JSON object per line");
+    }
+    row.clear();
+    std::unordered_set<std::string> names;
+    for (auto member = object.MemberBegin(); member != object.MemberEnd(); ++member) {
+      const auto &value = member->value;
+      std::string name(member->name.GetString(), member->name.GetStringLength());
+      if (name.empty() || name.find('\0') != std::string::npos || !names.insert(lower_ascii(name)).second) {
+        throw std::invalid_argument("invalid or duplicate JSON column name");
+      }
+      CsvType type = CsvType::UNKNOWN;
+      CsvCell cell{{}, value.IsNull()};
+      if (value.IsString()) {
+        cell.text.assign(value.GetString(), value.GetStringLength());
+        const auto inferred = infer(cell.text);
+        type = inferred == CsvType::DATE || inferred == CsvType::DATETIME ? inferred : CsvType::VARCHAR;
+      } else if (!cell.is_null) {
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        if (!value.Accept(writer)) {
+          throw std::invalid_argument("could not serialize JSON field");
+        }
+        cell.text.assign(buffer.GetString(), buffer.GetSize());
+        type = value.IsBool() ? CsvType::BOOLEAN : value.IsInt64() ? CsvType::BIGINT :
+               value.IsDouble() ? CsvType::DOUBLE : CsvType::VARCHAR;
+      }
+      row.emplace_back(CsvColumn{std::move(name), type, cell.is_null}, std::move(cell));
+    }
+    return true;
+  }
+  if (input.bad()) {
+    throw std::runtime_error("could not read JSON lines");
+  }
+  return false;
+}
+
+std::vector<CsvColumn> infer_json_lines_schema(std::istream &input)
+{
+  std::vector<CsvColumn> columns;
+  std::vector<size_t> present;
+  std::unordered_map<std::string, size_t> indexes;
+  size_t row_count = 0;
+  JsonRow row;
+  while (read_json_line(input, row)) {
+    ++row_count;
+    for (const auto &field : row) {
+      const auto &column = field.first;
+      const auto entry = indexes.emplace(lower_ascii(column.name), columns.size());
+      if (entry.second) {
+        columns.push_back(column);
+        present.push_back(1);
+      } else {
+        const size_t index = entry.first->second;
+        auto &existing = columns[index];
+        if (!column.nullable) {
+          existing.type = common_type(existing.type, column.type);
+        }
+        existing.nullable |= column.nullable;
+        ++present[index];
+      }
+    }
+  }
+  for (size_t i = 0; i < columns.size(); ++i) {
+    columns[i].nullable |= present[i] != row_count;
+    if (columns[i].type == CsvType::UNKNOWN) {
+      columns[i].type = CsvType::VARCHAR;
     }
   }
   return columns;
