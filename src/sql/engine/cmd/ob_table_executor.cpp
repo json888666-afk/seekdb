@@ -776,8 +776,10 @@ int execute_ai_column_retry(ObExecContext &ctx, ObAlterTableStmt &stmt)
   const uint64_t column_id = stmt.get_retry_ai_column_id();
   const ObTableSchema *table = nullptr;
   const ObColumnSchemaV2 *column = nullptr;
-  CK (OB_NOT_NULL(session), OB_NOT_NULL(ctx.get_sql_ctx()), OB_NOT_NULL(ctx.get_sql_ctx()->schema_guard_));
-  OZ (ctx.get_sql_ctx()->schema_guard_->get_table_schema(table_id, table));
+  ObSchemaGetterGuard guard;
+  CK (OB_NOT_NULL(session), OB_NOT_NULL(GCTX.schema_service_));
+  OZ (GCTX.schema_service_->get_runtime_schema_guard(guard));
+  OZ (guard.get_table_schema(table_id, table));
   CK (OB_NOT_NULL(table));
   OX (column = table->get_column_schema(column_id));
   CK (OB_NOT_NULL(column), column->is_ai_result_column());
