@@ -2219,7 +2219,7 @@ int append_ai_identifier(ObSqlString &sql, const ObString &name)
   return ret;
 }
 
-int serialize_ai_rowkey(const ObIArray<ObObj> &cells, ObIAllocator &allocator, ObString &encoded)
+int serialize_ai_rowkey(ObIArray<ObObj> &cells, ObIAllocator &allocator, ObString &encoded)
 {
   int ret = OB_SUCCESS;
   ObRowkey key;

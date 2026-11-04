@@ -1970,7 +1970,6 @@ int ObDDLResolver::bind_ai_column_dependencies(const ParseNode &expression, cons
       } else if (dependency->get_column_id() == column.get_column_id() || dependency->is_hidden() ||
                  !dependency->get_ai_column_expression().empty() || has_ai_column_companions(table_schema, *dependency)) {
         ret = OB_NOT_SUPPORTED;
-        LOG_USER_ERROR(OB_NOT_SUPPORTED, "AI COLUMN dependency on an AI or hidden column");
       } else {
         bool present = false;
         for (int64_t d = 0; !present && d < dependencies.count(); ++d) {
