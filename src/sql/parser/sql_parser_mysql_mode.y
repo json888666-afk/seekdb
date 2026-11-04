@@ -11248,21 +11248,15 @@ relation_factor %prec LOWER_PARENS
 }
 | relation_name '(' expr_list ')' %prec LOWER_PARENS
 {
-  ParseNode *args = NULL;
-  merge_nodes(args, result, T_EXPR_LIST, $3);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, NULL);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, NULL);
 }
 | relation_name '(' expr_list ')' relation_name
 {
-  ParseNode *args = NULL;
-  merge_nodes(args, result, T_EXPR_LIST, $3);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, $5);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $5);
 }
 | relation_name '(' expr_list ')' AS relation_name
 {
-  ParseNode *args = NULL;
-  merge_nodes(args, result, T_EXPR_LIST, $3);
-  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, args, $6);
+  malloc_non_terminal_node($$, result->malloc_pool_, T_TABLE_COLLECTION_EXPRESSION, 3, $1, $3, $6);
 }
 | TABLE '(' simple_expr ')' %prec LOWER_PARENS
 {
