@@ -2420,8 +2420,12 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
       OZ (op.execute_write(insert_sql.ptr()));
     }
     const int end_ret = op.end_nested_session();
-    if (OB_SUCC(ret)) {
+    if (OB_FAIL(ret)) {
+      LOG_WARN("failed to write AI column changes in the row transaction",
+               K(ret), K(event), K(das.index_tid_), K(end_ret));
+    } else if (OB_SUCCESS != end_ret) {
       ret = end_ret;
+      LOG_WARN("failed to restore session after writing AI column changes", K(ret), K(das.index_tid_));
     }
   }
   return ret;
