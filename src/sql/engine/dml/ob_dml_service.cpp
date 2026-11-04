@@ -2350,7 +2350,7 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
     ObString encoded;
     OZ (collect_ai_rowkey(op, dml, table->get_rowkey_info(), false, old_key));
     OZ (serialize_ai_rowkey(old_key, allocator, encoded));
-    OZ (remove_sql.append_fmt("DELETE FROM oceanbase.%s WHERE table_id=%llu AND row_key=",
+    OZ (remove_sql.append_fmt("DELETE /*+ use_plan_cache(none) */ FROM oceanbase.%s WHERE table_id=%llu AND row_key=",
         OB_ALL_AI_COLUMN_TASK_TNAME, static_cast<unsigned long long>(das.index_tid_)));
     OZ (sql_append_hex_escape_str(encoded, remove_sql));
     if (updating) {
@@ -2366,7 +2366,7 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
     OZ (build_ai_rowkey_predicate(*table, new_key, session->create_obj_print_params(),
                                   allocator, predicate));
     OZ (ObExprUuid::gen_server_uuid(request, UuidCommon::LENGTH_UUID));
-    OZ (insert_sql.append_fmt("INSERT INTO oceanbase.%s "
+    OZ (insert_sql.append_fmt("INSERT /*+ use_plan_cache(none) */ INTO oceanbase.%s "
         "(table_id, request_id, column_id, row_key, rowkey_predicate, definition_version, eligible_ts) "
         "SELECT table_id, '%s', column_id, ", OB_ALL_AI_COLUMN_TASK_TNAME, request));
     OZ (sql_append_hex_escape_str(encoded, insert_sql));
@@ -2407,11 +2407,10 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
   if (OB_FAIL(ret)) {
   } else if (OB_FAIL(op.begin_nested_session(true))) {
   } else {
+    const ObSessionDDLInfo saved = session->get_ddl_info();
+    session->get_ddl_info().set_ai_column_writeback(true);
     if (updating) {
-      const ObSessionDDLInfo saved = session->get_ddl_info();
-      session->get_ddl_info().set_ai_column_writeback(true);
-      ret = op.execute_write(invalidate_sql.ptr());
-      session->set_ddl_info(saved);
+      OZ (op.execute_write(invalidate_sql.ptr()));
     }
     if (!inserting) {
       OZ (op.execute_write(remove_sql.ptr()));
@@ -2419,6 +2418,7 @@ int persist_ai_row_tasks(ObTableModifyOp &op, const ObDMLBaseCtDef &dml, ObDmlEv
     if (!deleting) {
       OZ (op.execute_write(insert_sql.ptr()));
     }
+    session->set_ddl_info(saved);
     const int end_ret = op.end_nested_session();
     if (OB_FAIL(ret)) {
       LOG_WARN("failed to write AI column changes in the row transaction",
