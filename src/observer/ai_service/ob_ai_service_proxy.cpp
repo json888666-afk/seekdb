@@ -110,6 +110,37 @@ int ObAiServiceProxy::claim_ai_column_request(ObArenaAllocator &allocator,
   return ret;
 }
 
+namespace {
+
+int release_stale_ai_request(ObISQLClient &proxy, const ObAiColumnLease &lease)
+{
+  int ret = OB_SUCCESS;
+  ObSqlString condition;
+  ObSqlString sql;
+  ObMySQLTransaction trans;
+  int64_t affected = 0;
+  OZ (condition.append_fmt("t.table_id=%llu AND t.lease_expiry > NOW(6) AND t.request_id=",
+                           static_cast<unsigned long long>(lease.table_id_)));
+  OZ (sql_append_hex_escape_str(lease.request_id_, condition));
+  OZ (condition.append(" AND t.lease_token="));
+  OZ (sql_append_hex_escape_str(lease.token_, condition));
+
+  OZ (sql.append_fmt("DELETE t FROM oceanbase.%s t LEFT JOIN oceanbase.%s a "
+      "ON a.table_id=t.table_id AND a.column_id=t.column_id AND a.definition_version=t.definition_version "
+      "LEFT JOIN oceanbase.%s c ON c.table_id=t.table_id AND c.column_id=t.column_id "
+      "WHERE %s AND (a.table_id IS NULL OR c.table_id IS NULL)",
+      OB_ALL_AI_COLUMN_TASK_TNAME, OB_ALL_AI_COLUMN_TNAME, OB_ALL_COLUMN_TNAME, condition.ptr()));
+  OZ (trans.start(&proxy));
+  OZ (trans.write(sql.ptr(), affected));
+  sql.reset();
+  OZ (sql.append_fmt("UPDATE oceanbase.%s t SET lease_token=NULL, lease_expiry=NULL WHERE %s",
+                     OB_ALL_AI_COLUMN_TASK_TNAME, condition.ptr()));
+  OZ (trans.write(sql.ptr(), affected));
+  return trans.handle_trans_in_the_end(ret);
+}
+
+} // namespace
+
 int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
                                                ObISQLClient &sql_proxy,
                                                const ObAiColumnLease &lease,
@@ -162,7 +193,17 @@ int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
     OZ (tasks.push_back(task));
   }
   if (ret == OB_ITER_END) {
-    ret = tasks.count() == lease.task_count_ ? OB_SUCCESS : OB_EAGAIN;
+    if (tasks.count() == lease.task_count_) {
+      ret = OB_SUCCESS;
+    } else {
+      // Drop rows tied to superseded definitions, and release any surviving
+      // members so a smaller, still-valid group can be claimed immediately.
+      result.reset();
+      ret = release_stale_ai_request(sql_proxy, lease);
+      if (OB_SUCC(ret)) {
+        ret = OB_EAGAIN;
+      }
+    }
   }
   if (OB_FAIL(ret)) {
     tasks.reset();
