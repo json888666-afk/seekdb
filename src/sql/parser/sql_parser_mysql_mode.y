@@ -12358,8 +12358,8 @@ explain_or_desc relation_factor opt_desc_column_option
 
 explain_or_desc:
 EXPLAIN {$$ = NULL;}
-| DESCRIBE { malloc_terminal_node($$, result->malloc_pool_, T_INT); }
-| DESC { malloc_terminal_node($$, result->malloc_pool_, T_INT); }
+| DESCRIBE { malloc_terminal_node($$, result->malloc_pool_, T_EMPTY); }
+| DESC { malloc_terminal_node($$, result->malloc_pool_, T_EMPTY); }
 ;
 
 explainable_stmt:

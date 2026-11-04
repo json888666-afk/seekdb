@@ -112,7 +112,7 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
         ret = OB_ERR_UNEXPECTED;
         LOG_WARN("failed to generate stmt for child stmt");
       } else if (parse_tree.children_[EXPLAIN_FORMAT] != nullptr &&
-                 T_INT == parse_tree.children_[EXPLAIN_FORMAT]->type_ && child_stmt->is_select_stmt() &&
+                 T_EMPTY == parse_tree.children_[EXPLAIN_FORMAT]->type_ && child_stmt->is_select_stmt() &&
                  static_cast<ObSelectStmt *>(child_stmt)->get_table_size() == 1 &&
                  static_cast<ObSelectStmt *>(child_stmt)->get_table_item(0)->file_sql_column_count_ > 0) {
         ObStmt *description = nullptr;
@@ -126,7 +126,7 @@ int ObExplainResolver::resolve(const ParseNode &parse_tree)
         ParseNode *format = parse_tree.children_[EXPLAIN_FORMAT];
         if (NULL != format) {
           switch (format->type_) {
-          case T_INT:
+          case T_EMPTY:
             break;
           case T_OUTLINE:
           {
