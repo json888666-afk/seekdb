@@ -34,6 +34,9 @@ namespace sql {
 namespace file_sql {
 namespace {
 
+constexpr size_t MAX_FILE_SQL_ROW_BYTES = 16 * 1024 * 1024;
+constexpr size_t MAX_FILE_SQL_COLUMNS = 4096;
+
 enum class FieldState { START, UNQUOTED, QUOTED, AFTER_QUOTE };
 
 bool digits(const std::string &s, size_t first, size_t last)
@@ -139,7 +142,11 @@ bool CsvReader::next(CsvRow &row)
   std::string field;
   FieldState state = FieldState::START;
   bool has_input = false;
+  size_t row_bytes = 0;
   auto finish_field = [&]() {
+    if (row.size() == MAX_FILE_SQL_COLUMNS) {
+      throw std::length_error("CSV row has too many columns");
+    }
     const bool is_null = state == FieldState::START;
     row.push_back({std::move(field), is_null});
     field.clear();
@@ -161,6 +168,9 @@ bool CsvReader::next(CsvRow &row)
       return has_input;
     }
     has_input = true;
+    if (++row_bytes > MAX_FILE_SQL_ROW_BYTES) {
+      throw std::length_error("CSV row is too large");
+    }
 
     if (state == FieldState::QUOTED) {
       if (c == '"') {
@@ -243,7 +253,18 @@ std::vector<CsvColumn> infer_csv_schema(std::istream &input, bool header)
 bool read_json_line(std::istream &input, JsonRow &row)
 {
   std::string line;
-  while (std::getline(input, line)) {
+  while (true) {
+    line.clear();
+    int ch = 0;
+    while ((ch = input.get()) != '\n' && ch != std::char_traits<char>::eof()) {
+      if (line.size() == MAX_FILE_SQL_ROW_BYTES) {
+        throw std::length_error("JSON line is too large");
+      }
+      line.push_back(static_cast<char>(ch));
+    }
+    if (line.empty() && ch == std::char_traits<char>::eof()) {
+      break;
+    }
     if (line.find_first_not_of(" \t\r") == std::string::npos) {
       continue;
     }
@@ -252,6 +273,9 @@ bool read_json_line(std::istream &input, JsonRow &row)
         object.Parse<rapidjson::kParseValidateEncodingFlag>(line.c_str()).HasParseError() ||
         !object.IsObject()) {
       throw std::invalid_argument("expected one JSON object per line");
+    }
+    if (object.MemberCount() > MAX_FILE_SQL_COLUMNS) {
+      throw std::length_error("JSON object has too many columns");
     }
     row.clear();
     std::unordered_set<std::string> names;
@@ -303,6 +327,9 @@ std::vector<CsvColumn> infer_json_lines_schema(std::istream &input)
       const auto &column = field.first;
       const auto entry = indexes.emplace(lower_ascii(column.name), columns.size());
       if (entry.second) {
+        if (columns.size() == MAX_FILE_SQL_COLUMNS) {
+          throw std::length_error("JSON schema has too many columns");
+        }
         columns.push_back(column);
         present.push_back(1);
       } else {
