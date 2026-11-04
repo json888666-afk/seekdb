@@ -110,6 +110,58 @@ int ObAiServiceProxy::claim_ai_column_request(ObArenaAllocator &allocator,
   return ret;
 }
 
+int ObAiServiceProxy::read_ai_column_request(ObArenaAllocator &allocator,
+                                               ObISQLClient &sql_proxy,
+                                               const ObAiColumnLease &lease,
+                                               ObIArray<ObAiColumnWork> &tasks)
+{
+  int ret = OB_SUCCESS;
+  tasks.reset();
+  ObSqlString sql;
+  if (lease.table_id_ == OB_INVALID_ID || lease.request_id_.empty() ||
+      lease.token_.empty() || lease.task_count_ <= 0) {
+    ret = OB_INVALID_ARGUMENT;
+  }
+  OZ (sql.append_fmt("SELECT t.column_id, t.definition_version, t.retry_count, "
+      "t.rowkey_predicate, a.max_retries, a.normalized_expr "
+      "FROM oceanbase.%s t JOIN oceanbase.%s a ON a.table_id=t.table_id "
+      "AND a.column_id=t.column_id AND a.definition_version=t.definition_version "
+      "JOIN oceanbase.%s c ON c.table_id=t.table_id AND c.column_id=t.column_id "
+      "WHERE t.table_id=%llu AND t.lease_expiry > NOW(6) AND t.request_id=",
+      OB_ALL_AI_COLUMN_TASK_TNAME, OB_ALL_AI_COLUMN_TNAME, OB_ALL_COLUMN_TNAME,
+      static_cast<unsigned long long>(lease.table_id_)));
+  OZ (sql_append_hex_escape_str(lease.request_id_, sql));
+  OZ (sql.append(" AND t.lease_token="));
+  OZ (sql_append_hex_escape_str(lease.token_, sql));
+  OZ (sql.append(" ORDER BY t.column_id"));
+
+  ObISQLClient::ReadResult result;
+  OZ (sql_proxy.read(result, sql.ptr()));
+  auto *row = result.get_result();
+  CK (OB_NOT_NULL(row));
+  while (OB_SUCC(ret) && OB_SUCC(ret = row->next())) {
+    ObAiColumnWork task;
+    ObString predicate;
+    ObString rule;
+    EXTRACT_INT_FIELD_MYSQL(*row, "column_id", task.column_id_, uint64_t);
+    EXTRACT_INT_FIELD_MYSQL(*row, "definition_version", task.definition_version_, int64_t);
+    EXTRACT_INT_FIELD_MYSQL(*row, "retry_count", task.retry_count_, int64_t);
+    EXTRACT_INT_FIELD_MYSQL(*row, "max_retries", task.max_retries_, int64_t);
+    EXTRACT_VARCHAR_FIELD_MYSQL(*row, "rowkey_predicate", predicate);
+    EXTRACT_VARCHAR_FIELD_MYSQL(*row, "normalized_expr", rule);
+    OZ (ob_write_string(allocator, predicate, task.predicate_));
+    OZ (ob_write_string(allocator, rule, task.rule_));
+    OZ (tasks.push_back(task));
+  }
+  if (ret == OB_ITER_END) {
+    ret = tasks.count() == lease.task_count_ ? OB_SUCCESS : OB_EAGAIN;
+  }
+  if (OB_FAIL(ret)) {
+    tasks.reset();
+  }
+  return ret;
+}
+
 int ObAiServiceProxy::insert_ai_endpoint(ObMySQLTransaction &trans, const int64_t new_endpoint_version, const ObAiModelEndpointInfo &endpoint)
 {
   int ret = OB_SUCCESS;

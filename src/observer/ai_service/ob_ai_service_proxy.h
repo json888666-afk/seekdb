@@ -18,6 +18,7 @@
 #define OCEANBASE_SHARE_AI_SERVICE_OB_AI_SERVICE_PROXY_H_
 
 #include "share/ai_service/ob_ai_service_struct.h"
+#include "lib/container/ob_iarray.h"
 
 namespace oceanbase
 {
@@ -41,6 +42,16 @@ struct ObAiColumnLease
   int64_t task_count_ = 0;
 };
 
+struct ObAiColumnWork
+{
+  uint64_t column_id_ = OB_INVALID_ID;
+  int64_t definition_version_ = 0;
+  int64_t max_retries_ = 0;
+  int64_t retry_count_ = 0;
+  ObString predicate_;
+  ObString rule_;
+};
+
 class ObAiServiceProxy
 {
 public:
@@ -52,6 +63,10 @@ public:
                                      common::ObISQLClient &sql_proxy,
                                      int64_t lease_us,
                                      ObAiColumnLease &lease);
+  static int read_ai_column_request(common::ObArenaAllocator &allocator,
+                                    common::ObISQLClient &sql_proxy,
+                                    const ObAiColumnLease &lease,
+                                    common::ObIArray<ObAiColumnWork> &tasks);
   // ai endpoint
   static int insert_ai_endpoint(common::ObMySQLTransaction &trans, const int64_t new_endpoint_version, const ObAiModelEndpointInfo &endpoint);
   static int select_ai_endpoint(common::ObArenaAllocator &allocator, common::ObISQLClient &sql_proxy,
