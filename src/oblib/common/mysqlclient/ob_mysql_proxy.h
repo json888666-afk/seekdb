@@ -41,7 +41,7 @@ public:
   InnerDDLInfo() : is_ddl_(false), is_source_table_hidden_(false), is_dest_table_hidden_(false), is_heap_table_ddl_(false),
   is_ddl_check_default_value_bit_(false), is_retryable_ddl_(false),
   is_dummy_ddl_for_inner_visibility_(false), is_vec_tablet_rebuild_(false),
-  is_partition_local_ddl_(false), reserved_bit_(0)
+  is_partition_local_ddl_(false), ai_column_writeback_(false), reserved_bit_(0)
   {
   }
   void set_is_ddl(const bool is_ddl) { is_ddl_ = is_ddl; }
@@ -62,6 +62,8 @@ public:
   bool is_vec_tablet_rebuild() const { return is_vec_tablet_rebuild_; }
   void set_is_partition_local_ddl(const bool flag) { is_partition_local_ddl_ = flag; }
   bool is_partition_local_ddl() const { return is_partition_local_ddl_; }
+  void set_ai_column_writeback(bool enabled) { ai_column_writeback_ = enabled; }
+  bool is_ai_column_writeback() const { return ai_column_writeback_; }
   inline void reset() { ddl_info_ = 0; }
   TO_STRING_KV(K_(ddl_info));
   OB_UNIS_VERSION(1);
@@ -75,7 +77,7 @@ public:
   static const int64_t IS_VEC_TABLET_REBUILD_BIT = 1;
   static const int64_t IS_SEARCH_INDEX_DDL_BIT = 1;
   static const int64_t IS_PARTITION_LOCAL_DDL_BIT = 1;
-  static const int64_t RESERVED_BIT = 64 - IS_DDL_BIT - 2 * IS_TABLE_HIDDEN_BIT - IS_HEAP_TABLE_DDL_BIT - IS_DDL_CHECK_DEFAULT_VALUE_BIT - IS_RETRYABLE_DDL_BIT - IS_DUMMY_DDL_FOR_INNER_VISIBILITY_BIT - IS_VEC_TABLET_REBUILD_BIT - IS_SEARCH_INDEX_DDL_BIT - IS_PARTITION_LOCAL_DDL_BIT;
+  static const int64_t RESERVED_BIT = 64 - IS_DDL_BIT - 2 * IS_TABLE_HIDDEN_BIT - IS_HEAP_TABLE_DDL_BIT - IS_DDL_CHECK_DEFAULT_VALUE_BIT - IS_RETRYABLE_DDL_BIT - IS_DUMMY_DDL_FOR_INNER_VISIBILITY_BIT - IS_VEC_TABLET_REBUILD_BIT - IS_SEARCH_INDEX_DDL_BIT - IS_PARTITION_LOCAL_DDL_BIT - 1;
   union {
     uint64_t ddl_info_;
     struct {
@@ -94,6 +96,7 @@ public:
       uint64_t is_vec_tablet_rebuild_ : IS_VEC_TABLET_REBUILD_BIT;
       uint64_t is_search_index_ddl_ : IS_SEARCH_INDEX_DDL_BIT;
       uint64_t is_partition_local_ddl_ : IS_PARTITION_LOCAL_DDL_BIT;
+      uint64_t ai_column_writeback_ : 1;
       uint64_t reserved_bit_ : RESERVED_BIT;
     };
   };
@@ -121,6 +124,8 @@ public:
   void set_is_vec_tablet_rebuild(const bool flag) { ddl_info_.set_is_vec_tablet_rebuild(flag); }
   void set_partition_local_ddl(const bool flag) { ddl_info_.set_is_partition_local_ddl(flag); }
 
+  void set_ai_column_writeback(bool enabled) { ddl_info_.set_ai_column_writeback(enabled); }
+  bool is_ai_column_writeback() const { return ddl_info_.is_ai_column_writeback(); }
   bool is_ddl() const { return ddl_info_.is_ddl(); }
   bool is_source_table_hidden() const { return ddl_info_.is_source_table_hidden(); }
   bool is_dest_table_hidden() const { return ddl_info_.is_dest_table_hidden(); }

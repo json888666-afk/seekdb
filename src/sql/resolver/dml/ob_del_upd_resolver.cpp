@@ -80,7 +80,8 @@ int ObDelUpdResolver::is_ai_write_target(const TableItem &table, const ColumnIte
   const ObColumnSchemaV2 *schema = nullptr;
   if (OB_ISNULL(session_info_) || OB_ISNULL(schema_checker_)) {
     ret = OB_ERR_UNEXPECTED;
-  } else if (table_id == OB_INVALID_ID || session_info_->get_ddl_info().is_ddl()) {
+  } else if (table_id == OB_INVALID_ID || session_info_->get_ddl_info().is_ddl() ||
+             session_info_->get_ddl_info().is_ai_column_writeback()) {
   } else if (OB_FAIL(schema_checker_->get_column_schema(table_id, column_id, schema, true))) {
   } else if (schema != nullptr) {
     is_ai_result = schema->is_ai_result_column();
