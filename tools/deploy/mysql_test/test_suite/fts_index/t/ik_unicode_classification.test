@@ -1,0 +1,18 @@
+connection default;
+select tokenize(_utf8mb4'数据库全文索引、OceanBase-2.0，二十公斤。', 'ik') as tokens;
+select tokenize(_utf8mb4'かなカナ 한국어 中文 𠀀 😀 ＡＢＣ１２３', 'ik') as tokens;
+select tokenize(_utf8mb4'!，。', 'ik') as tokens;
+drop table if exists ik_unicode_classification;
+create table ik_unicode_classification (
+  id int primary key,
+  body varchar(200) character set utf8mb4,
+  fulltext index ft_body (body) with parser ik
+);
+insert into ik_unicode_classification values
+  (1, _utf8mb4'数据库全文索引'), (2, _utf8mb4'查询优化'), (3, _utf8mb4'数据库向量检索');
+select id from ik_unicode_classification
+  where match(body) against (_utf8mb4'数据库' in boolean mode) order by id;
+update ik_unicode_classification set body = _utf8mb4'排序算法' where id = 1;
+select id from ik_unicode_classification
+  where match(body) against (_utf8mb4'数据库' in boolean mode) order by id;
+drop table ik_unicode_classification;
