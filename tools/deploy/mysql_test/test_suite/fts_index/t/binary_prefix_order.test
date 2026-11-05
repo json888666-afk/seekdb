@@ -1,0 +1,12 @@
+connection default;
+--disable_warnings
+drop table if exists binary_prefix_order;
+--enable_warnings
+create table binary_prefix_order (id int primary key, b varbinary(16));
+insert into binary_prefix_order values
+  (1, x'61'), (2, x'6120'), (3, x'6100'), (4, x'61FF'),
+  (5, x''), (6, null), (7, x'FF'), (8, x'41');
+select id, concat('0x', hex(b)) as bytes from binary_prefix_order order by b, id;
+select id, b = x'61' as eq, b < x'6120' as lt, b > x'61' as gt
+  from binary_prefix_order order by id;
+drop table binary_prefix_order;

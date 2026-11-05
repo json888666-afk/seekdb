@@ -571,7 +571,15 @@ int ObCharset::strcmpsp(ObCollationType collation_type,
                         bool cmp_endspace)
 {
   int result = 0;
-  if (is_argument_valid(collation_type, str1, str1_len, str2, str2_len)) {
+  if (CS_TYPE_BINARY == collation_type && str1_len >= 0 && str2_len >= 0
+      && (str1 != nullptr || str1_len == 0) && (str2 != nullptr || str2_len == 0)) {
+    // The binary collation compares every byte, including trailing spaces.
+    const int64_t prefix_len = OB_MIN(str1_len, str2_len);
+    result = prefix_len == 0 ? 0 : memcmp(str1, str2, prefix_len);
+    if (result == 0) {
+      result = static_cast<int>(str1_len - str2_len);
+    }
+  } else if (is_argument_valid(collation_type, str1, str1_len, str2, str2_len)) {
     const ObCharsetInfo *cs = get_charset(collation_type);
     result = cs->coll->strnncollsp(cs,
                                 reinterpret_cast<const unsigned char *>(str1),
