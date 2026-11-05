@@ -1,0 +1,40 @@
+drop table if exists daat_batch_projection;
+create table daat_batch_projection (
+id int primary key,
+body varchar(200) character set utf8mb4,
+fulltext index ft_body (body) with parser beng
+);
+insert into daat_batch_projection values
+(1, 'apple apple orchard'), (2, 'apple banana'), (3, 'banana orchard'),
+(4, null), (5, 'pear');
+insert into daat_batch_projection select id + 5, body from daat_batch_projection;
+insert into daat_batch_projection select id + 10, body from daat_batch_projection;
+insert into daat_batch_projection select id + 20, body from daat_batch_projection;
+insert into daat_batch_projection select id + 40, body from daat_batch_projection;
+insert into daat_batch_projection select id + 80, body from daat_batch_projection;
+insert into daat_batch_projection select id + 160, body from daat_batch_projection;
+select count(*), sum(id) from daat_batch_projection
+where match(body) against ('apple banana');
+count(*)	sum(id)
+192	30624
+select id, round(match(body) against ('apple banana'), 8) as score
+from daat_batch_projection where match(body) against ('apple banana') > 0
+order by score desc, id limit 7 offset 2;
+id	score
+12	1.20157831
+17	1.20157831
+22	1.20157831
+27	1.20157831
+32	1.20157831
+37	1.20157831
+42	1.20157831
+select count(*), sum(id) from daat_batch_projection
+where match(body) against ('+apple -banana' in boolean mode);
+count(*)	sum(id)
+64	10144
+update daat_batch_projection set body = 'pear' where id = 1;
+select count(*), sum(id) from daat_batch_projection
+where match(body) against ('apple banana');
+count(*)	sum(id)
+191	30623
+drop table daat_batch_projection;
