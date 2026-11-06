@@ -26,4 +26,12 @@ select count(*), sum(id) from daat_batch_projection
 update daat_batch_projection set body = 'pear' where id = 1;
 select count(*), sum(id) from daat_batch_projection
   where match(body) against ('apple banana');
+# The TAAT fallback must still deduplicate rows when scoring is disabled.
+--disable_query_log
+set @saved_group_concat_max_len = @@session.group_concat_max_len;
+set session group_concat_max_len = 4096;
+let $long_terms = `with recursive seq(n) as (select 1 union all select n+1 from seq where n < 298) select group_concat(concat('term', n) order by n separator ' ') from seq`;
+eval select count(*) as hits from daat_batch_projection where match(body) against ('apple banana $long_terms');
+set session group_concat_max_len = @saved_group_concat_max_len;
+--enable_query_log
 drop table daat_batch_projection;

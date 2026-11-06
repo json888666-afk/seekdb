@@ -1,0 +1,27 @@
+drop table if exists fts_backfill_word_counts;
+create table fts_backfill_word_counts (id int primary key, body varchar(500) character set utf8mb4);
+insert into fts_backfill_word_counts values
+(1, _utf8mb4'数据库 数据库 全文索引'),
+(2, _utf8mb4'全文索引 分词器 数据库'),
+(3, ''), (4, null),
+(5, _utf8mb4'搜索检索'),
+(6, _utf8mb4'数据库 查询优化 并行构建 全文索引 文档处理 中文检索'),
+(7, _utf8mb4'数据库 数据库 全文索引');
+alter table fts_backfill_word_counts add fulltext index ft_body (body) with parser ik;
+select id, round(match(body) against (_utf8mb4'数据库'), 8) as score
+from fts_backfill_word_counts where match(body) against (_utf8mb4'数据库')
+order by id;
+id	score
+1	0.42801556
+2	0.35031847
+6	0.25000000
+7	0.42801556
+select id from fts_backfill_word_counts
+where match(body) against (_utf8mb4'分词器' in boolean mode) order by id;
+id
+2
+update fts_backfill_word_counts set body = _utf8mb4'搜索检索' where id = 2;
+select id from fts_backfill_word_counts
+where match(body) against (_utf8mb4'分词器' in boolean mode) order by id;
+id
+drop table fts_backfill_word_counts;

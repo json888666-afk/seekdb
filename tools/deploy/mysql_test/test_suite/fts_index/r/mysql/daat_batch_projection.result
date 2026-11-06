@@ -37,4 +37,6 @@ select count(*), sum(id) from daat_batch_projection
 where match(body) against ('apple banana');
 count(*)	sum(id)
 191	30623
+hits
+191
 drop table daat_batch_projection;
