@@ -12039,17 +12039,21 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
     ObTextRetrievalInfo &tr_info = table_scan->get_text_retrieval_info();
     tr_info.match_expr_ = match_against;
     tr_info.pushdown_match_filter_ = match_pred;
-    // A scalar aggregate has no row order to preserve. For a natural-language
-    // predicate, each document found in the posting lists has a positive score.
+    // A natural-language predicate needs only posting-list membership when
+    // its consumer does not read document values or relevance.
     if (get_stmt()->is_select_stmt() && match_against->get_mode_flag() == NATURAL_LANGUAGE_MODE
         && match_against->get_columns_boosts().empty() && match_pred->get_expr_type() == T_OP_BOOL
         && match_pred->get_param_count() == 1 && match_pred->get_param_expr(0) == match_against) {
       const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt *>(get_stmt());
       const ObIArray<ObAggFunRawExpr *> &aggregates = select_stmt->get_aggr_items();
-      if (select_stmt->is_single_table_stmt() && select_stmt->is_scala_group_by()
-          && !table_scan->get_index_back() && !select_stmt->has_order_by() && aggregates.count() == 1
-          && aggregates.at(0)->get_expr_type() == T_FUN_COUNT
-          && !aggregates.at(0)->has_flag(CNT_COLUMN)
+      const bool scalar_count = select_stmt->is_scala_group_by() && aggregates.count() == 1
+          && aggregates.at(0) != nullptr && aggregates.at(0)->get_expr_type() == T_FUN_COUNT
+          && !aggregates.at(0)->has_flag(CNT_COLUMN);
+      const bool constant_output = !select_stmt->is_scala_group_by() && select_stmt->has_limit()
+          && select_stmt->get_select_item_size() == 1 && select_stmt->get_select_item(0).expr_ != nullptr
+          && select_stmt->get_select_item(0).expr_->is_const_expr();
+      if (select_stmt->is_single_table_stmt() && (scalar_count || constant_output)
+          && !table_scan->get_index_back() && !select_stmt->has_order_by()
           && select_stmt->get_condition_size() == 1) {
         ObSEArray<ObRawExpr *, 16> expressions;
         if (OB_FAIL(select_stmt->get_relation_exprs(expressions))) {

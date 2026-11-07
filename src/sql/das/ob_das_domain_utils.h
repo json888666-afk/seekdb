@@ -20,6 +20,7 @@
 #include "lib/allocator/page_arena.h"
 #include "lib/hash/ob_hashset.h"
 #include "common/datum/ob_datum.h"
+#include "data_plane/blocksstable/ob_storage_datum.h"
 #include "sql/das/ob_das_dml_ctx_define.h"
 #include "data_plane/fts/ob_fts_parser_helper.h"
 #include "data_plane/fts/ob_fts_doc_word_scan.h"
@@ -35,28 +36,39 @@ namespace sql
 class ObFTIndexRowCache final
 {
 public:
-  static ObObjDatumMapType FTS_INDEX_TYPES[4];
-  static ObObjDatumMapType FTS_DOC_WORD_TYPES[4];
-  static ObExprOperatorType FTS_INDEX_EXPR_TYPE[4];
-  static ObExprOperatorType FTS_DOC_WORD_EXPR_TYPE[4];
-
   ObFTIndexRowCache();
   ~ObFTIndexRowCache();
   int init(
-      const bool is_fts_index_aux,
       const common::ObString &parser_name,
-      const common::ObString &parser_properties);
+      const common::ObString &parser_properties,
+      ObExpr *word_expr,
+      ObExpr *doc_id_expr,
+      ObExpr *word_count_expr,
+      ObExpr *doc_length_expr);
   int segment(const common::ObObjMeta &ft_obj_meta, const ObDatum &doc_id, const common::ObString &fulltext);
-  int get_next_row(blocksstable::ObDatumRow *&row);
+  int get_next_row(ObEvalCtx &ctx);
+  ObExpr *word_expr() const { return word_expr_; }
+  ObExpr *doc_id_expr() const { return doc_id_expr_; }
   void reset();
   void reuse();
-  TO_STRING_KV(K_(row_idx), K_(is_fts_index_aux), K_(helper), K_(is_inited),
-               "row_count", rows_.count());
+  TO_STRING_KV(K_(row_idx), K_(row_count), K_(helper), K_(is_inited));
 private:
+  struct WordEntry
+  {
+    ObDatum word_;
+    int64_t count_;
+  };
+
   lib::MemoryContext merge_memctx_;
-  ObDomainIndexRow rows_;
-  uint64_t row_idx_;
-  bool is_fts_index_aux_;
+  WordEntry *rows_;
+  int64_t row_idx_;
+  int64_t row_count_;
+  blocksstable::ObStorageDatum doc_id_;
+  int64_t doc_length_;
+  ObExpr *word_expr_;
+  ObExpr *doc_id_expr_;
+  ObExpr *word_count_expr_;
+  ObExpr *doc_length_expr_;
   storage::ObFTParseHelper helper_;
   bool is_inited_;
 
@@ -197,13 +209,6 @@ public:
       const ObDASWriteBuffer::DmlRow &dml_row,
       ObDomainIndexRow &domain_rows);
 private:
-  static int segment_and_calc_word_count(
-      common::ObIAllocator &allocator,
-      storage::ObFTParseHelper *helper,
-      const common::ObObjMeta &meta,
-      const ObString &fulltext,
-      int64_t &doc_length,
-      storage::ObFTWordMap &words_count);
   static int calc_save_rowkey_policy(
     ObIAllocator &allocator,
     const ObDASDMLBaseCtDef &das_ctdef,

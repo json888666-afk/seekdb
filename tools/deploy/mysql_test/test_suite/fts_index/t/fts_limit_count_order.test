@@ -1,0 +1,36 @@
+connection default;
+--disable_warnings
+drop table if exists fts_limit_count_order;
+--enable_warnings
+create table fts_limit_count_order (id int primary key, body varchar(256) character set utf8mb4);
+insert into fts_limit_count_order values
+  (1, 'database engine'),
+  (2, 'database database database database'),
+  (3, 'database backup storage engine'),
+  (4, 'network engine'),
+  (5, null);
+alter table fts_limit_count_order add fulltext index ft_body (body) with parser beng;
+select count(*) from (
+  select id from fts_limit_count_order where match(body) against ('database') limit 2
+) t;
+select count(*) from (
+  select id from fts_limit_count_order where match(body) against ('database') limit 4 offset 1
+) t;
+select count(*) from (
+  select id from fts_limit_count_order where match(body) against ('database') limit 0
+) t;
+select count(*) from (
+  select id from fts_limit_count_order where match(body) against ('nomatch') limit 4
+) t;
+select count(*) from (
+  select id from fts_limit_count_order where match(body) against ('database') limit 1
+) t where t.id = 2;
+select id from (
+  select id from fts_limit_count_order where match(body) against ('database') limit 1
+) t;
+select (select id from fts_limit_count_order
+        where match(body) against ('database') limit 1) as best_id;
+select id from fts_limit_count_order
+  where match(body) against ('database')
+  order by match(body) against ('database') desc, id limit 2;
+drop table fts_limit_count_order;

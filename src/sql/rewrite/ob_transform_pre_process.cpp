@@ -32,6 +32,60 @@ namespace oceanbase
 using namespace common;
 namespace sql
 {
+// A scalar COUNT(*) over a single derived table observes only its cardinality.
+// A plain LIMIT/OFFSET preserves that cardinality under any row ordering.
+static bool can_skip_fulltext_order_for_count(
+    const ObIArray<ObParentDMLStmt> &parent_stmts, const ObDMLStmt &stmt)
+{
+  if (parent_stmts.empty() || !stmt.is_select_stmt() || stmt.get_limit_expr() == nullptr
+      || stmt.is_fetch_with_ties() || stmt.get_limit_percent_expr() != nullptr
+      || stmt.is_calc_found_rows() || stmt.is_contains_assignment()
+      || stmt.has_order_by() || stmt.get_match_exprs().count() != 1 || stmt.get_condition_size() != 1
+      || stmt.get_table_items().count() != 1) {
+    return false;
+  }
+  const ObDMLStmt *parent = parent_stmts.at(parent_stmts.count() - 1).stmt_;
+  const auto &view = static_cast<const ObSelectStmt &>(stmt);
+  const TableItem *base_table = view.get_table_item(0);
+  const ObMatchFunRawExpr *match = stmt.get_match_exprs().at(0);
+  const ObRawExpr *predicate = stmt.get_condition_expr(0);
+  if (parent == nullptr || !parent->is_select_stmt() || base_table == nullptr
+      || !base_table->is_basic_table() || base_table->has_for_update()
+      || match == nullptr || match->is_es_match() || match->get_search_key() == nullptr
+      || !match->get_search_key()->is_const_expr() || !match->get_columns_boosts().empty()
+      || predicate == nullptr
+      || (predicate != match && (predicate->get_expr_type() != T_OP_BOOL
+          || predicate->get_param_count() != 1 || predicate->get_param_expr(0) != match))
+      || view.is_set_stmt() || view.has_distinct() || view.has_group_by() || view.has_having()
+      || view.get_aggr_item_size() != 0 || view.has_window_function()) {
+    return false;
+  }
+  const auto &count_stmt = static_cast<const ObSelectStmt &>(*parent);
+  if (!count_stmt.is_single_table_stmt() || count_stmt.get_table_items().count() != 1
+      || count_stmt.get_condition_size() != 0 || !count_stmt.is_scala_group_by()
+      || !count_stmt.get_column_items().empty() || count_stmt.has_having()
+      || count_stmt.get_select_item_size() != 1) {
+    return false;
+  }
+  const TableItem *derived = count_stmt.get_table_item(0);
+  const auto &aggregates = count_stmt.get_aggr_items();
+  if (derived == nullptr
+      || !derived->is_generated_table() || derived->is_view_table_ || derived->ref_query_ != &stmt
+      || aggregates.count() != 1 || aggregates.at(0) == nullptr
+      || count_stmt.get_select_item(0).expr_ != aggregates.at(0)
+      || aggregates.at(0)->get_expr_type() != T_FUN_COUNT
+      || aggregates.at(0)->get_real_param_count() != 0) {
+    return false;
+  }
+  for (int64_t i = 0; i < view.get_select_item_size(); ++i) {
+    const ObRawExpr *expr = view.get_select_item(i).expr_;
+    if (expr == nullptr || (!expr->is_column_ref_expr() && !expr->is_const_expr())) {
+      return false;
+    }
+  }
+  return true;
+}
+
 int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> &parent_stmts,
                                               ObDMLStmt *&stmt,
                                               bool &trans_happened)
@@ -177,9 +231,15 @@ int ObTransformPreProcess::transform_one_stmt(common::ObIArray<ObParentDMLStmt> 
         trans_happened |= is_happened;
       }
     }
-    if (OB_SUCC(ret)) {
-      if (stmt->get_match_exprs().count() > 0 &&
-          OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
+    if (OB_SUCC(ret) && stmt->get_match_exprs().count() > 0) {
+      if (can_skip_fulltext_order_for_count(parent_stmts, *stmt)) {
+        auto &view = static_cast<ObSelectStmt &>(*stmt);
+        view.get_select_items().reuse();
+        if (OB_FAIL(ObTransformUtils::create_dummy_select_item(view, ctx_))) {
+        } else {
+          trans_happened = true;
+        }
+      } else if (OB_FAIL(preserve_order_for_fulltext_search(stmt, is_happened))) {
       } else {
         trans_happened |= is_happened;
       }
