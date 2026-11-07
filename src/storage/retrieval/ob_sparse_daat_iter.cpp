@@ -232,9 +232,59 @@ int ObSRDaaTIterImpl::get_next_rows(const int64_t capacity, int64_t &count)
   } else {
     count = 0;
     const int64_t real_capacity = MIN(capacity, iter_param_->max_batch_size_);
-    while (OB_SUCC(ret) && count < real_capacity) {
-      if (OB_FAIL(do_one_merge_round(count))) {
-        if (OB_UNLIKELY(OB_ITER_END != ret)) {
+    const int64_t dim_count = dim_iters_->count();
+    if (iter_param_->count_only_ && !iter_param_->need_filter()
+        && !iter_param_->limit_param_->is_valid()
+        && dim_count <= ObSRSimpleMerger::USE_SIMPLE_MERGER_MAX_TABLE_CNT) {
+      // Keep one head per posting list. Advance all heads equal to the minimum
+      // together so each matching document contributes exactly one row.
+      while (OB_SUCC(ret) && count < real_capacity) {
+        for (int64_t i = 0; OB_SUCC(ret) && i < next_round_cnt_; ++i) {
+          const int64_t idx = next_round_iter_idxes_[i];
+          ObISRDaaTDimIter *iter = dim_iters_->at(idx);
+          if (OB_ISNULL(iter)) {
+            ret = OB_ERR_UNEXPECTED;
+          } else if (OB_FAIL(iter->get_next_row())) {
+            if (OB_ITER_END == ret) {
+              iter_domain_ids_[idx] = nullptr;
+              ret = OB_SUCCESS;
+            }
+          } else if (OB_FAIL(iter->get_curr_id(iter_domain_ids_[idx]))) {
+          }
+        }
+
+        next_round_cnt_ = 0;
+        ObSRMergeItem minimum;
+        for (int64_t i = 0; OB_SUCC(ret) && i < dim_count; ++i) {
+          if (OB_NOT_NULL(iter_domain_ids_[i])) {
+            ObSRMergeItem head;
+            head.iter_idx_ = i;
+            int64_t cmp = -1;
+            if (next_round_cnt_ > 0 && OB_FAIL(merge_cmp_.cmp(head, minimum, cmp))) {
+            } else if (cmp <= 0) {
+              if (cmp < 0) {
+                minimum = head;
+                next_round_cnt_ = 0;
+              }
+              next_round_iter_idxes_[next_round_cnt_++] = i;
+            }
+          }
+        }
+        if (OB_SUCC(ret)) {
+          if (0 == next_round_cnt_) {
+            ret = OB_ITER_END;
+          } else {
+            ++count;
+          }
+        }
+      }
+      input_row_cnt_ += count;
+      output_row_cnt_ += count;
+    } else {
+      while (OB_SUCC(ret) && count < real_capacity) {
+        if (OB_FAIL(do_one_merge_round(count))) {
+          if (OB_UNLIKELY(OB_ITER_END != ret)) {
+          }
         }
       }
     }
