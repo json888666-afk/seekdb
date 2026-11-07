@@ -1,0 +1,12 @@
+select tokenize(_utf8mb4'cafeine caféine caféine' collate utf8mb4_general_ci,
+'beng', '[{"output":"all"}]') as last_accent;
+last_accent
+{"tokens": [{"caféine": 3}], "doc_len": 3}
+select tokenize(_utf8mb4'caféine cafeine cafeine' collate utf8mb4_general_ci,
+'beng', '[{"output":"all"}]') as last_plain;
+last_plain
+{"tokens": [{"cafeine": 3}], "doc_len": 3}
+select tokenize(_utf8mb4'cafeine caféine caféine' collate utf8mb4_bin,
+'beng', '[{"output":"all"}]') as distinct_binary;
+distinct_binary
+{"tokens": [{"cafeine": 1}, {"caféine": 2}], "doc_len": 3}

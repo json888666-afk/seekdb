@@ -1,0 +1,9 @@
+connection default;
+
+# Equivalent keys retain the latest spelling and accumulate the count.
+select tokenize(_utf8mb4'cafeine caféine caféine' collate utf8mb4_general_ci,
+  'beng', '[{"output":"all"}]') as last_accent;
+select tokenize(_utf8mb4'caféine cafeine cafeine' collate utf8mb4_general_ci,
+  'beng', '[{"output":"all"}]') as last_plain;
+select tokenize(_utf8mb4'cafeine caféine caféine' collate utf8mb4_bin,
+  'beng', '[{"output":"all"}]') as distinct_binary;
