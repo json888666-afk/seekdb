@@ -51,8 +51,13 @@ private:
   ObObjMeta meta_;
 };
 
-// Token counts are collected within one parser invocation and are never shared across workers.
-typedef common::hash::ObHashMap<ObFTWord, int64_t, common::hash::NoPthreadDefendMode> ObFTWordMap;
+// Both the buckets and their node allocator belong to one parser invocation.
+using FTWordMapNode = common::hash::HashMapTypes<ObFTWord, int64_t>::AllocType;
+using FTWordMapAllocator = common::hash::SimpleAllocer<
+    FTWordMapNode, common::hash::NodeNumTraits<FTWordMapNode>::NODE_NUM, common::hash::NoPthreadDefendMode>;
+using ObFTWordMap = common::hash::ObHashMap<
+    ObFTWord, int64_t, common::hash::NoPthreadDefendMode,
+    common::hash::hash_func<ObFTWord>, common::hash::equal_to<ObFTWord>, FTWordMapAllocator>;
 
 class ObAddWordFlag final
 {
