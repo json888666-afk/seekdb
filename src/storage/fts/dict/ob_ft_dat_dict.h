@@ -48,7 +48,7 @@ public:
 
   struct Header
   {
-    uint32_t buffer_size_;
+    uint32_t capacity_reciprocal_;
     uint32_t capacity_;
     uint32_t count_;
     Entry data[1];
@@ -68,6 +68,7 @@ public:
   int find(const ObFTSingleWord &word, ObFTWordCode &code) const;
 
 private:
+  uint32_t bucket_index(const ObString &word) const;
   struct Header header_;
 } __attribute__((packed));
 

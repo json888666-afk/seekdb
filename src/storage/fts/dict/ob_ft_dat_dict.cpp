@@ -299,18 +299,32 @@ template class ObFTDATReader<void>;
 
 ObArrayHashMap *ObFTDAT::get_map() { return reinterpret_cast<ObArrayHashMap *>(buff); }
 
+inline uint32_t ObArrayHashMap::bucket_index(const ObString &word) const
+{
+  // The reciprocal rounds down, so the estimated quotient can be at most
+  // one below the exact quotient for a 32-bit hash.
+  const uint32_t hash = static_cast<uint32_t>(word.hash());
+  const uint32_t capacity = header_.capacity_;
+  const uint32_t quotient = (static_cast<uint64_t>(hash) * header_.capacity_reciprocal_) >> 32;
+  const uint32_t remainder = hash - quotient * capacity;
+  return remainder >= capacity ? remainder - capacity : remainder;
+}
+
 int ObArrayHashMap::find(const ObFTSingleWord &word, ObFTWordCode &code) const
 {
   int ret = OB_ENTRY_NOT_EXIST;
-  uint64_t hash = word.get_word().hash();
-  uint64_t index = hash % header_.capacity_;
+  const uint64_t capacity = header_.capacity_;
+  uint64_t index = bucket_index(word.get_word());
   while (header_.data[index].used) {
     if (header_.data[index].word == word) {
       code = header_.data[index].code;
       ret = OB_SUCCESS;
       break;
     } else {
-      index = (index + 3) % header_.capacity_;
+      index += 3;
+      if (index >= capacity) {
+        index -= capacity;
+      }
     }
   }
   return ret;
@@ -319,10 +333,13 @@ int ObArrayHashMap::find(const ObFTSingleWord &word, ObFTWordCode &code) const
 int ObArrayHashMap::insert(const ObString &key, ObFTWordCode code)
 {
   int ret = OB_SUCCESS;
-  uint64_t hash = key.hash();
-  uint64_t index = hash % header_.capacity_;
+  const uint64_t capacity = header_.capacity_;
+  uint64_t index = bucket_index(key);
   while (header_.data[index].used) {
-    index = (index + 3) % header_.capacity_;
+    index += 3;
+    if (index >= capacity) {
+      index -= capacity;
+    }
   }
 
   header_.data[index].code = code;
@@ -339,8 +356,8 @@ int ObArrayHashMap::init(size_t word_num)
   size_t size = estimate_size(word_num);
 
   memset(this, 0, size);
-  header_.buffer_size_ = size;
   header_.capacity_ = capacity;
+  header_.capacity_reciprocal_ = (uint64_t{1} << 32) / capacity;
   header_.count_ = 0;
   return OB_SUCCESS;
 }
@@ -356,7 +373,8 @@ size_t ObArrayHashMap::estimate_capacity(size_t word_num)
 {
   constexpr size_t MIN_CAPACITY = 101;                   // prime
   size_t capacity = MAX(word_num * 4 / 3, MIN_CAPACITY); // 75%
-  return capacity;
+  // The probe stride must visit every bucket.
+  return capacity % 3 == 0 ? capacity + 1 : capacity;
 }
 } //  namespace storage
 } //  namespace oceanbase
