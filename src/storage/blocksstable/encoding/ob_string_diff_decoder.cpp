@@ -165,6 +165,15 @@ int ObStringDiffDecoder::batch_decode(
     if (OB_FAIL(ret)) {
     } else if (OB_ISNULL(buf = static_cast<char *>(ctx.allocator_->alloc(buf_size * row_cap)))) {
       ret = OB_ALLOCATE_MEMORY_FAILED;
+    } else if (row_cap > 1 && string_size <= min_buf_size && header_->diff_desc_cnt_ > 1) {
+      // Short strings can share a template for their common runs. The varying
+      // bytes are filled from the encoded cell after the template is copied.
+      MEMSET(buf, 0, string_size);
+      header_->copy_string(ObStringDiffHeader::LeftToRight(), std::logical_not<uint8_t>(),
+          header_->common_data(), buf);
+      for (int64_t i = 1; i < row_cap; ++i) {
+        MEMCPY(buf + i * buf_size, buf, string_size);
+      }
     } else {
       for (int64_t i = 0; i < row_cap; ++i) {
         header_->copy_string(ObStringDiffHeader::LeftToRight(), std::logical_not<uint8_t>(),
