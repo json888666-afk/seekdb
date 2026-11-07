@@ -12047,7 +12047,7 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
       const ObSelectStmt *select_stmt = static_cast<const ObSelectStmt *>(get_stmt());
       const ObIArray<ObAggFunRawExpr *> &aggregates = select_stmt->get_aggr_items();
       if (select_stmt->is_single_table_stmt() && select_stmt->is_scala_group_by()
-          && !select_stmt->has_order_by() && aggregates.count() == 1
+          && !table_scan->get_index_back() && !select_stmt->has_order_by() && aggregates.count() == 1
           && aggregates.at(0)->get_expr_type() == T_FUN_COUNT
           && !aggregates.at(0)->has_flag(CNT_COLUMN)
           && select_stmt->get_condition_size() == 1) {
@@ -12057,7 +12057,8 @@ int ObLogPlan::prepare_text_retrieval_scan(const ObIArray<ObRawExpr *> &scan_mat
           bool needs_score = false;
           for (int64_t i = 0; !needs_score && i < expressions.count(); ++i) {
             const ObRawExpr *expr = expressions.at(i);
-            needs_score = expr == nullptr || (expr != match_pred && expr->has_flag(CNT_MATCH_EXPR));
+            needs_score = expr == nullptr || (expr != match_pred
+                && (expr->has_flag(CNT_MATCH_EXPR) || expr->has_flag(CNT_COLUMN)));
           }
           if (!needs_score) {
             tr_info.need_calc_relevance_ = false;
