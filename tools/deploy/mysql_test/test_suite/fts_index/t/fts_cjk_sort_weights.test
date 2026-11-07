@@ -1,0 +1,19 @@
+connection default;
+--disable_warnings
+drop table if exists fts_cjk_sort_weights;
+--enable_warnings
+create table fts_cjk_sort_weights (
+  id int primary key, word varchar(32) character set utf8mb4 collate utf8mb4_general_ci
+);
+insert into fts_cjk_sort_weights values
+  (1, convert(x'e4b7bf' using utf8mb4)), (2, _utf8mb4'一'),
+  (3, _utf8mb4'龿'), (4, convert(x'ea8080' using utf8mb4)),
+  (5, _utf8mb4'一a'), (6, _utf8mb4'一Á '), (7, _utf8mb4'一丁'),
+  (8, _utf8mb4'一 '), (9, _utf8mb4'一😀'), (10, _utf8mb4'一𠀀'),
+  (11, convert(x'e4b88001' using utf8mb4));
+select id, hex(word) from fts_cjk_sort_weights order by word, id;
+select a.id, b.id, strcmp(a.word, b.word) as cmp
+  from fts_cjk_sort_weights a join fts_cjk_sort_weights b
+  where (a.id = 2 and b.id in (1, 3, 8, 11)) or (a.id = 5 and b.id in (6, 7))
+  order by a.id, b.id;
+drop table fts_cjk_sort_weights;

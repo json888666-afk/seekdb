@@ -329,49 +329,6 @@ static int ob_strnncoll_utf8mb4(const ObCharsetInfo *cs,
   return (int) (t_is_prefix ? (dst - te) : ((se - src) - (te - dst)));
 }
 
-int __attribute__ ((noinline))  ob_strnncollsp_utf8mb4_help(
-    const unsigned char **s_, size_t srclen,
-    const unsigned char **t_, size_t dstlen,
-    const unsigned char **se_, const unsigned char **te_,
-    bool diff_if_only_endspace_difference, int *has_returned, int *res_)
-{
-  const unsigned char *src = *s_;
-  const unsigned char *dst = *t_;
-  const unsigned char *se = *se_;
-  const unsigned char *te = *te_;
-  int res = *res_;
-  *has_returned = 0;
-  int swap= 1;
-  if (srclen != dstlen) {
-    if (diff_if_only_endspace_difference) {
-      res= 1;                              
-    }
-    if (srclen < dstlen) {
-      srclen= dstlen;
-      src= dst;
-      se= te;
-      swap= -1;
-      res= -res;
-    }
-    while (src < se) {
-      if (*src != ' ') {
-        *has_returned = 1;
-        break;
-      }
-      src++;
-    }
-  }
-  *s_ = src;
-  *t_ = dst;
-  *se_ = se;
-  *te_ = te;
-  *res_ = res;
-  if (*has_returned == 1) {
-    return (!diff_if_only_endspace_difference && (*src < ' ')) ? -swap : swap;
-  }
-  return 0;
-}
-
 static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
                        const unsigned char *src, size_t srclen,
                        const unsigned char *dst, size_t dstlen,
@@ -383,11 +340,28 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
       && (src == dst || srclen == 0 || (srclen <= 32 && memcmp(src, dst, srclen) == 0))) {
     return 0;
   }
-  int res;
   ob_wc_t src_wc = 0, dst_wc = 0;
   const unsigned char *se= src + srclen, *te= dst + dstlen;
   ObUnicaseInfo *uni_plane= cs->caseinfo;
   while ( src < se && dst < te ) {
+    // The default weight table leaves U+4E00 through U+9FFF unchanged.
+    // Within this range, well-formed UTF-8 bytes preserve code point order.
+    if (uni_plane == &ob_unicase_default
+        && src[0] >= 0xe4 && src[0] <= 0xe9 && dst[0] >= 0xe4 && dst[0] <= 0xe9
+        && se - src >= 3 && te - dst >= 3
+        && IS_CONTINUATION_BYTE(src[1]) && IS_CONTINUATION_BYTE(src[2])
+        && IS_CONTINUATION_BYTE(dst[1]) && IS_CONTINUATION_BYTE(dst[2])
+        && (src[0] != 0xe4 || src[1] >= 0xb8)
+        && (dst[0] != 0xe4 || dst[1] >= 0xb8)) {
+      const unsigned int left = (src[0] << 16) | (src[1] << 8) | src[2];
+      const unsigned int right = (dst[0] << 16) | (dst[1] << 8) | dst[2];
+      if (left != right) {
+        return left < right ? -1 : 1;
+      }
+      src += 3;
+      dst += 3;
+      continue;
+    }
     int s_res= ob_mb_wc_utf8mb4(cs, &src_wc, src, se);
     int t_res= ob_mb_wc_utf8mb4(cs, &dst_wc, dst, te);
     if ( s_res <= 0 || t_res <= 0 ) {
@@ -402,16 +376,22 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
       dst +=t_res;
     }
   }
-  srclen = (size_t) (se-src);
-  dstlen = (size_t) (te-dst);
-  res= 0;
-  int has_returned = 0;
-  int tmp = ob_strnncollsp_utf8mb4_help(
-      &src, srclen,
-      &dst, dstlen,
-      &se, &te,
-      diff_if_only_endspace_difference, &has_returned, &res);
-  return has_returned ? tmp : res;
+  const size_t left_remaining = se - src;
+  const size_t right_remaining = te - dst;
+  if (left_remaining == right_remaining) {
+    return 0;
+  }
+  const bool left_longer = left_remaining > right_remaining;
+  const int direction = left_longer ? 1 : -1;
+  if (diff_if_only_endspace_difference) {
+    return direction;
+  }
+  const unsigned char *rest = left_longer ? src : dst;
+  const unsigned char *end = left_longer ? se : te;
+  while (rest < end && *rest == ' ') {
+    ++rest;
+  }
+  return rest == end ? 0 : *rest < ' ' ? -direction : direction;
 }
 
 static size_t ob_strxfrm_pad_nweights_unicode(unsigned char *str, unsigned char *strend, size_t nweights)
