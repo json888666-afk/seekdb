@@ -377,6 +377,12 @@ static int ob_strnncollsp_utf8mb4(const ObCharsetInfo *cs,
                        const unsigned char *dst, size_t dstlen,
                        bool diff_if_only_endspace_difference)
 {
+  // Repeated short keys compare equal under every Unicode sort weight.
+  // Bound the byte comparison to avoid rescanning long, unequal prefixes.
+  if (srclen == dstlen
+      && (src == dst || srclen == 0 || (srclen <= 32 && memcmp(src, dst, srclen) == 0))) {
+    return 0;
+  }
   int res;
   ob_wc_t src_wc = 0, dst_wc = 0;
   const unsigned char *se= src + srclen, *te= dst + dstlen;
