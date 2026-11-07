@@ -21,7 +21,7 @@
 #include "lib/allocator/page_arena.h"
 #include "lib/string/ob_string.h"
 #include "sql/engine/expr/ob_expr_operator.h"
-#include "data_plane/fts/ob_fts_parser_property.h"
+#include "data_plane/fts/ob_fts_parser_helper.h"
 
 namespace oceanbase
 {
@@ -63,13 +63,13 @@ private:
     int parse_json_param(const ObIJsonBase *obj);
 
     // check and reform parser properties to standard format
-    int reform_parser_properties(const ObString &properties);
+    int get_parser_properties(storage::ObFTParserProperty &properties);
     int try_load_dictionary_for_ik();
 
   public:
     // for property and tmp json string
-    mutable ObArenaAllocator allocator_;
-    ObString parser_name_;
+    ObArenaAllocator allocator_;
+    storage::ObFTParser parser_;
     ObString properties_;
     ObObjMeta meta_;
     ObString fulltext_;
@@ -83,7 +83,6 @@ private:
 private:
   static int parse_param(const ObExpr &expr,
                          ObEvalCtx &ctx,
-                         common::ObArenaAllocator &allocator,
                          TokenizeParam &param);
 
   static int parse_fulltext(const ObExpr &expr, ObEvalCtx &ctx, TokenizeParam &param);
@@ -94,11 +93,10 @@ private:
                                      TokenizeParam &param);
 
   static int tokenize_fulltext(const TokenizeParam &param,
+                               const storage::ObFTParserProperty &properties,
                                TokenizeParam::OUTPUT_MODE mode,
                                common::ObIAllocator &allocator,
                                ObIJsonBase *&result);
-
-  static int construct_ft_parser_inner_name(const ObString &input_str, TokenizeParam &param);
 
 private:
   DISALLOW_COPY_AND_ASSIGN(ObExprTokenize);

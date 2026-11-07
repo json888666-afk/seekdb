@@ -1,0 +1,27 @@
+set @doc = _utf8mb4'OceanBase 全文索引、分词器与 Database performance 2.0';
+select cast(tokenize(cast(@doc as char character set utf8mb4), ' IK ') as binary) =
+cast(tokenize(cast(@doc as char character set utf8mb4), 'ik',
+'[{"additional_args":[{"ik_mode":"smart"}]}]') as binary) as ik_defaults;
+ik_defaults
+1
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'beng') as binary) =
+cast(tokenize(cast(@doc as char character set utf8mb4), 'beng',
+'[{"additional_args":[{"min_token_size":3},{"max_token_size":84}]}]') as binary) as beng_defaults;
+beng_defaults
+1
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'space') as binary) =
+cast(tokenize(cast(@doc as char character set utf8mb4), 'space',
+'[{"additional_args":[{"min_token_size":3},{"max_token_size":84}]}]') as binary) as space_defaults;
+space_defaults
+1
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'ngram') as binary) =
+cast(tokenize(cast(@doc as char character set utf8mb4), 'ngram',
+'[{"additional_args":[{"ngram_token_size":2}]}]') as binary) as ngram_defaults;
+ngram_defaults
+1
+select tokenize(cast(@doc as char character set utf8mb4), 'ngram2', '[{"output":"all"}]') as ngram2_all;
+ngram2_all
+{"tokens": [{"ab": 1}, {"per": 1}, {"bas": 2}, {"ea": 1}, {"ma": 1}, {"fo": 1}, {"rfo": 1}, {"ean": 1}, {"oc": 1}, {"erf": 1}, {"词器": 1}, {"ce": 2}, {"at": 1}, {"ase": 2}, {"器与": 1}, {"索引": 1}, {"se": 2}, {"oce": 1}, {"da": 1}, {"ta": 1}, {"分词器": 1}, {"ba": 2}, {"rma": 1}, {"or": 1}, {"er": 1}, {"全文索": 1}, {"orm": 1}, {"nba": 1}, {"文索": 1}, {"全文": 1}, {"词器与": 1}, {"分词": 1}, {"rf": 1}, {"ata": 1}, {"aba": 1}, {"nb": 1}, {"nce": 1}, {"tab": 1}, {"an": 2}, {"rm": 1}, {"dat": 1}, {"anc": 1}, {"for": 1}, {"cea": 1}, {"as": 2}, {"文索引": 1}, {"nc": 1}, {"man": 1}, {"pe": 1}, {"anb": 1}], "doc_len": 57}
+select tokenize(null), tokenize(''), tokenize('Search words', null);
+tokenize(null)	tokenize('')	tokenize('Search words', null)
+[]	[]	["search", "words"]

@@ -1,0 +1,16 @@
+connection default;
+set @doc = _utf8mb4'OceanBase 全文索引、分词器与 Database performance 2.0';
+select cast(tokenize(cast(@doc as char character set utf8mb4), ' IK ') as binary) =
+       cast(tokenize(cast(@doc as char character set utf8mb4), 'ik',
+         '[{"additional_args":[{"ik_mode":"smart"}]}]') as binary) as ik_defaults;
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'beng') as binary) =
+       cast(tokenize(cast(@doc as char character set utf8mb4), 'beng',
+         '[{"additional_args":[{"min_token_size":3},{"max_token_size":84}]}]') as binary) as beng_defaults;
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'space') as binary) =
+       cast(tokenize(cast(@doc as char character set utf8mb4), 'space',
+         '[{"additional_args":[{"min_token_size":3},{"max_token_size":84}]}]') as binary) as space_defaults;
+select cast(tokenize(cast(@doc as char character set utf8mb4), 'ngram') as binary) =
+       cast(tokenize(cast(@doc as char character set utf8mb4), 'ngram',
+         '[{"additional_args":[{"ngram_token_size":2}]}]') as binary) as ngram_defaults;
+select tokenize(cast(@doc as char character set utf8mb4), 'ngram2', '[{"output":"all"}]') as ngram2_all;
+select tokenize(null), tokenize(''), tokenize('Search words', null);

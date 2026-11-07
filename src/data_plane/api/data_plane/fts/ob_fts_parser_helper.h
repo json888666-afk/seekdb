@@ -161,6 +161,8 @@ public:
       common::ObIAllocator *allocator,
       const common::ObString &parser_name,
       const common::ObString &parser_properties);
+  int init(common::ObIAllocator *allocator, const ObFTParser &parser,
+           const ObFTParserProperty &properties);
   /**
    * Split document into multiple words
    *
@@ -217,6 +219,7 @@ private:
       common::ObIAllocator &allocator,
       ObAddWord &add_word);
   int set_add_word_flag(const ObIFTParserDesc &ftparser_desc);
+  int init_parser_desc(common::ObIAllocator *allocator);
 private:
   common::ObIAllocator *allocator_;
   const ObIFTParserDesc *parser_desc_;
