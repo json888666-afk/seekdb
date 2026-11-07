@@ -825,9 +825,10 @@ static void ob_hash_sort_utf8mb4(const ObCharsetInfo *cs, const unsigned char *s
                unsigned long int *n1, unsigned long int *n2, const bool calc_end_space, hash_algo hash_algo)
 {
   ob_wc_t wc;
-  int res;
   const unsigned char *end= src + srclen;
   ObUnicaseInfo *uni_plane= cs->caseinfo;
+  const ObUnicaseInfoChar *ascii = uni_plane->maxchar >= 0x7f ? uni_plane->page[0] : nullptr;
+  const bool lower_sort = (cs->state & OB_CS_LOWER_SORT) != 0;
   int length = 0;
   unsigned char data[HASH_BUFFER_LENGTH];
   if (!calc_end_space) {
@@ -835,19 +836,35 @@ static void ob_hash_sort_utf8mb4(const ObCharsetInfo *cs, const unsigned char *s
       end--;
   }
 
-  if (NULL == hash_algo) {
-    while ((res= ob_mb_wc_utf8mb4(cs, &wc, (unsigned char*) src, (unsigned char*) end)) > 0) {
+  auto next_weight = [&]() -> bool {
+    if (src == end) {
+      return false;
+    }
+    if (ascii != nullptr && *src < 0x80) {
+      // Use the same collation weight without decoding a single-byte code point.
+      const ObUnicaseInfoChar &mapping = ascii[*src++];
+      wc = lower_sort ? mapping.tolower : mapping.sort;
+    } else {
+      const int char_len = ob_mb_wc_utf8mb4(cs, &wc, src, end);
+      if (char_len <= 0) {
+        return false;
+      }
       ob_tosort_unicode(uni_plane, &wc, cs->state);
+      src += char_len;
+    }
+    return true;
+  };
+
+  if (NULL == hash_algo) {
+    while (next_weight()) {
       ob_hash_add(n1, n2, (unsigned int) (wc & 0xFF));
       ob_hash_add(n1, n2, (unsigned int) (wc >> 8)  & 0xFF);
       if (wc > 0xFFFF) {
         ob_hash_add(n1, n2, (unsigned int) (wc >> 16) & 0xFF);
       }
-      src+= res;
     }
   } else {
-    while ((res= ob_mb_wc_utf8mb4(cs, &wc, (unsigned char*) src, (unsigned char*) end)) > 0) {
-      ob_tosort_unicode(uni_plane, &wc, cs->state);
+    while (next_weight()) {
       if (length > HASH_BUFFER_LENGTH - 2 || (HASH_BUFFER_LENGTH - 2 == length && wc > 0xFFFF)) {
         *n1 = hash_algo((void*) &data, length, *n1);
         length = 0;
@@ -857,7 +874,6 @@ static void ob_hash_sort_utf8mb4(const ObCharsetInfo *cs, const unsigned char *s
       if (wc > 0xFFFF) {
         data[length++] = (unsigned char)(wc >> 16);
       }
-      src+= res;
     }
     if (length > 0) {
       *n1 = hash_algo((void*) &data, length, *n1);
