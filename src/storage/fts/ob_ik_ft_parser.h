@@ -40,7 +40,7 @@ public:
         coll_type_(ObCollationType::CS_TYPE_INVALID),
         ctx_(nullptr),
         hub_(hub),
-        segmenters_(allocator_),
+        segmenters_(nullptr),
         cache_main_(allocator),
         cache_quan_(allocator),
         dict_main_(nullptr),
@@ -74,7 +74,7 @@ private:
 
   int init_single_dict(ObFTDictDesc desc, ObFTCacheRangeContainer &container);
 
-  int init_segmenter(const ObFTParserParam &param);
+  int init_segmenters();
 
   int init_ctx(const ObFTParserParam &param);
 
@@ -94,7 +94,8 @@ private:
   ObCollationType coll_type_;
   TokenizeContext *ctx_;
   ObFTDictHub *hub_;
-  ObList<ObIIKProcessor *, ObIAllocator> segmenters_;
+  struct Segmenters;
+  Segmenters *segmenters_;
 
   // For now there's no change of dict in one query, so we can pin dict this level.
   ObFTCacheRangeContainer cache_main_;

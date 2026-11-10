@@ -37,7 +37,8 @@ TokenizeContext::TokenizeContext(ObCollationType coll_type,
                                  int64_t fulltext_len,
                                  bool is_smart)
     : coll_type_(coll_type), fulltext_(fulltext), fulltext_len_(fulltext_len), cursor_(0),
-      next_char_len_(0), handle_size_(0), is_smart_(is_smart), token_list_(allocator),
+      next_char_len_(0), handle_size_(0), is_smart_(is_smart),
+      is_utf8mb4_(ObCharset::charset_type_by_coll(coll_type) == CHARSET_UTF8MB4), token_list_(allocator),
       result_list_(allocator)
 {
 }
@@ -87,12 +88,19 @@ int TokenizeContext::current_char_type(ObFTCharUtil::CharType &type)
 int TokenizeContext::prepare_next_char()
 {
   int ret = OB_SUCCESS;
-  if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
-                                          fulltext_ + cursor_,
+  const char *input = fulltext_ + cursor_;
+  const int utf8_len = is_utf8mb4_
+      ? ObFTCharUtil::scan_utf8_char(input, fulltext_ + fulltext_len_, next_char_type_)
+      : 0;
+  // Preserve the original error handling for malformed input.
+  if (utf8_len > 0) {
+    next_char_len_ = utf8_len;
+  } else if (OB_FAIL(ObCharset::first_valid_char(coll_type_,
+                                          input,
                                           fulltext_len_ - cursor_,
                                           next_char_len_))) {
   } else if (OB_FAIL(ObFTCharUtil::classify_first_char(coll_type_,
-                                                       fulltext_ + cursor_,
+                                                       input,
                                                        next_char_len_,
                                                        next_char_type_))) {
   }

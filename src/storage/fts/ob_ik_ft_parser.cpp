@@ -40,6 +40,18 @@ namespace oceanbase
 {
 namespace storage
 {
+struct ObIKFTParser::Segmenters
+{
+  Segmenters(const ObIFTDict &quantifier_dict, const ObIFTDict &main_dict, ObIAllocator &allocator)
+      : quantifier_(quantifier_dict, allocator), cjk_(main_dict, allocator)
+  {}
+
+  ObIKLetterProcessor letter_;
+  ObIKQuantifierProcessor quantifier_;
+  ObIKCJKProcessor cjk_;
+  ObIKSurrogateProcessor surrogate_;
+};
+
 int ObIKFTParser::init(const ObFTParserParam &param)
 {
   int ret = OB_SUCCESS;
@@ -54,7 +66,7 @@ int ObIKFTParser::init(const ObFTParserParam &param)
       ret = OB_INVALID_ARGUMENT;
     } else if (OB_FAIL(init_dict(param))) {
     } else if (OB_FAIL(init_ctx(param))) {
-    } else if (OB_FAIL(init_segmenter(param))) {
+    } else if (OB_FAIL(init_segmenters())) {
     }
 
     if (OB_FAIL(ret)) {
@@ -116,12 +128,11 @@ int ObIKFTParser::process_one_char(TokenizeContext &ctx,
                                    const ObFTCharUtil::CharType type)
 {
   int ret = OB_SUCCESS;
-  // proces by char with all segmenters
-  for (ObList<ObIIKProcessor *, ObIAllocator>::iterator iter = segmenters_.begin();
-       OB_SUCC(ret) && iter != segmenters_.end();
-       iter++) {
-    if (OB_FAIL((*iter)->do_process(ctx, ch, char_len, type))) {
-    }
+  // Quantifier processing must run before CJK processing.
+  if (OB_FAIL(segmenters_->letter_.do_process(ctx, ch, char_len, type))) {
+  } else if (OB_FAIL(segmenters_->quantifier_.do_process(ctx, ch, char_len, type))) {
+  } else if (OB_FAIL(segmenters_->cjk_.do_process(ctx, ch, char_len, type))) {
+  } else if (OB_FAIL(segmenters_->surrogate_.do_process(ctx, ch, char_len, type))) {
   }
   return ret;
 }
@@ -282,42 +293,13 @@ int ObIKFTParser::init_ctx(const ObFTParserParam &param)
   return ret;
 }
 
-int ObIKFTParser::init_segmenter(const ObFTParserParam &param)
+int ObIKFTParser::init_segmenters()
 {
   int ret = OB_SUCCESS;
-  // do have an order
-  ObIKLetterProcessor *letter_seg = nullptr;
-  ObIKQuantifierProcessor *cnqsg = nullptr;
-  ObIKCJKProcessor *cjksg = nullptr;
-  ObIKSurrogateProcessor *surrogate_seg = nullptr;
-  if (OB_ISNULL(letter_seg = OB_NEWx(ObIKLetterProcessor, &allocator_))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_ISNULL(dict_quan_)) {
+  if (OB_ISNULL(dict_quan_) || OB_ISNULL(dict_main_)) {
     ret = OB_ERR_UNEXPECTED;
-  } else if (OB_ISNULL(cnqsg = OB_NEWx(ObIKQuantifierProcessor, &allocator_, *dict_quan_, allocator_))) {
+  } else if (OB_ISNULL(segmenters_ = OB_NEWx(Segmenters, &allocator_, *dict_quan_, *dict_main_, allocator_))) {
     ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_ISNULL(dict_main_)) {
-    ret = OB_ERR_UNEXPECTED;
-  } else if (OB_ISNULL(cjksg = OB_NEWx(ObIKCJKProcessor, &allocator_, *dict_main_, allocator_))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_ISNULL(surrogate_seg = OB_NEWx(ObIKSurrogateProcessor, &allocator_))) {
-    ret = OB_ALLOCATE_MEMORY_FAILED;
-  } else if (OB_FAIL(segmenters_.push_back(letter_seg))) {
-  } else if (FALSE_IT(letter_seg = nullptr)) {
-  } else if (OB_FAIL(segmenters_.push_back(cnqsg))) {
-  } else if (FALSE_IT(cnqsg = nullptr)) {
-  } else if (OB_FAIL(segmenters_.push_back(cjksg))) {
-  } else if (FALSE_IT(cjksg = nullptr)) {
-  } else if (OB_FAIL(segmenters_.push_back(surrogate_seg))) {
-  } else if (OB_FALSE_IT(surrogate_seg = nullptr)) {
-  }
-  // push back by order, quantifier is before cjk
-
-  if (OB_FAIL(ret)) {
-    OB_DELETEx(ObIKLetterProcessor, &allocator_, letter_seg);
-    OB_DELETEx(ObIKQuantifierProcessor, &allocator_, cnqsg);
-    OB_DELETEx(ObIKCJKProcessor, &allocator_, cjksg);
-    OB_DELETEx(ObIKSurrogateProcessor, &allocator_, surrogate_seg);
   }
   return ret;
 }
@@ -329,13 +311,7 @@ void ObIKFTParser::reset()
     allocator_.free(ctx_);
   }
 
-  for (ObIIKProcessor *segmenter : segmenters_) {
-    if (!OB_ISNULL(segmenter)) {
-      segmenter->~ObIIKProcessor();
-      allocator_.free(segmenter);
-    }
-  }
-  segmenters_.clear();
+  OB_DELETEx(Segmenters, &allocator_, segmenters_);
 
   cache_main_.reset();
   cache_quan_.reset();

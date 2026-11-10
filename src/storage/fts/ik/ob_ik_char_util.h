@@ -52,6 +52,9 @@ public:
                                  const uint8_t char_len,
                                  CharType &type);
 
+  // A positive return value is the length of one valid UTF-8 character.
+  static int scan_utf8_char(const char *input, const char *end, CharType &type);
+
   static int check_cn_number(ObCollationType coll_type,
                              const char *input,
                              const uint8_t char_len,
@@ -76,6 +79,9 @@ public:
 private:
   template <ObCharsetType CS_TYPE>
   static int do_classify(const char *input, const uint8_t char_len, CharType &type);
+
+  template <ObCharsetType CS_TYPE>
+  static CharType classify_unicode(ob_wc_t unicode);
 
 private:
   /*************************  Ignore: some char should not output itself *********************/
@@ -283,14 +289,10 @@ inline int ObFTCharUtil::is_ignore_single_cjk(ObCollationType coll_type,
 }
 
 template <ObCharsetType CS_TYPE>
-inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, CharType &type)
+inline ObFTCharUtil::CharType ObFTCharUtil::classify_unicode(ob_wc_t unicode)
 {
-  int ret = OB_SUCCESS;
-  ob_wc_t unicode = 0;
-  type = CharType::USELESS;
-
-  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
-  } else if (ObUnicodeBlockUtils::is_alpha(unicode)) {
+  CharType type = CharType::USELESS;
+  if (ObUnicodeBlockUtils::is_alpha(unicode)) {
     type = CharType::ENGLISH_LETTER;
   } else if (ObUnicodeBlockUtils::is_arabic(unicode)) {
     type = CharType::ARABIC_LETTER;
@@ -305,7 +307,33 @@ inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, 
       type = CharType::SURROGATE_LOW;
     }
   }
+  return type;
+}
+
+template <ObCharsetType CS_TYPE>
+inline int ObFTCharUtil::do_classify(const char *input, const uint8_t char_len, CharType &type)
+{
+  int ret = OB_SUCCESS;
+  ob_wc_t unicode = 0;
+  type = CharType::USELESS;
+  if (OB_FAIL(decode_unicode<CS_TYPE>(input, char_len, unicode))) {
+  } else {
+    type = classify_unicode<CS_TYPE>(unicode);
+  }
   return ret;
+}
+
+inline int ObFTCharUtil::scan_utf8_char(const char *input, const char *end, CharType &type)
+{
+  ob_wc_t unicode = 0;
+  const int len = common::ob_charset_decode_unicode<CHARSET_UTF8MB4>(
+      reinterpret_cast<const unsigned char *>(input),
+      reinterpret_cast<const unsigned char *>(end),
+      unicode);
+  if (len > 0) {
+    type = classify_unicode<CHARSET_UTF8MB4>(unicode);
+  }
+  return len;
 }
 
 inline int ObFTCharUtil::classify_first_char(ObCollationType coll_type,
