@@ -2198,7 +2198,22 @@ ERRSIM_POINT_DEF(EN_TABLE_SCAN_RETRY_WAIT_EVENT_ERRSIM);
 int ObTableScanOp::inner_get_next_batch(const int64_t max_row_cnt)
 {
   int ret = OB_SUCCESS;
-  if (OB_UNLIKELY(rand_scan_processor_.use_rand_scan())) {
+  if (OB_UNLIKELY(MY_SPEC.is_fts_ddl_ && nullptr == tsc_rtdef_.scan_rtdef_.sample_info_)) {
+    clear_evaluated_flag();
+    ObEvalCtx::BatchInfoScopeGuard guard(eval_ctx_);
+    guard.set_batch_idx(0);
+    guard.set_batch_size(1);
+    // The batch points into the current document's arena. Fetch a new
+    // document only after the consumer has finished with that batch.
+    ret = fts_index_.get_next_batch(eval_ctx_, max_row_cnt, brs_.size_);
+    if (OB_ITER_END == ret && OB_SUCCESS == (ret = fetch_next_fts_index_rows())) {
+      ret = fts_index_.get_next_batch(eval_ctx_, max_row_cnt, brs_.size_);
+    }
+    if (OB_ITER_END == ret) {
+      brs_.end_ = true;
+      ret = OB_SUCCESS;
+    }
+  } else if (OB_UNLIKELY(rand_scan_processor_.use_rand_scan())) {
     if (OB_FAIL(rand_scan_processor_.inner_get_next_batch(max_row_cnt))) {
     }
   } else if (OB_FAIL(inner_get_next_batch_for_tsc(max_row_cnt))) {

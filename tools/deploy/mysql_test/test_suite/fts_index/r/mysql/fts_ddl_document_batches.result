@@ -1,0 +1,28 @@
+drop table if exists fts_ddl_document_batches;
+create table fts_ddl_document_batches (
+id int primary key, title varchar(64), body text
+) default charset utf8mb4;
+set @saved_concat_len = @@group_concat_max_len;
+set group_concat_max_len = 16384;
+insert into fts_ddl_document_batches
+with recursive terms(n) as (select 0 union all select n + 1 from terms where n < 399)
+select 1, 'commonword', group_concat(concat('token', char(97 + n div 20), char(97 + n mod 20))
+order by n separator ' ') from terms;
+set group_concat_max_len = @saved_concat_len;
+insert into fts_ddl_document_batches values
+(2, null, null), (3, '', ''), (4, 'commonword', 'secondword');
+alter table fts_ddl_document_batches add fulltext index ft_title_body (title, body) with parser beng;
+select id from fts_ddl_document_batches
+where match(title, body) against ('+tokenaa +tokentt' in boolean mode) order by id;
+id
+1
+select id from fts_ddl_document_batches
+where match(title, body) against ('commonword') order by id;
+id
+1
+4
+select id from fts_ddl_document_batches
+where match(title, body) against ('secondword') order by id;
+id
+4
+drop table fts_ddl_document_batches;

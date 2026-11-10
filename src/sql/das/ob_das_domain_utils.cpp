@@ -165,6 +165,40 @@ int ObFTIndexRowCache::get_next_row(ObEvalCtx &ctx)
   return ret;
 }
 
+int ObFTIndexRowCache::get_next_batch(ObEvalCtx &ctx, int64_t capacity, int64_t &count)
+{
+  int ret = OB_SUCCESS;
+  count = 0;
+  if (OB_UNLIKELY(!is_inited_)) {
+    ret = OB_NOT_INIT;
+  } else if (row_idx_ >= row_count_) {
+    ret = OB_ITER_END;
+  } else {
+    const int64_t size = MIN(capacity, row_count_ - row_idx_);
+    ObDatum doc_id;
+    if (OB_FAIL(doc_id.from_storage_datum(doc_id_, OBJ_DATUM_STRING))) {
+    } else {
+      ObDatum *words = word_expr_->locate_datums_for_update(ctx, size);
+      ObDatum *doc_ids = doc_id_expr_->locate_datums_for_update(ctx, size);
+      ObDatum *word_counts = word_count_expr_->locate_datums_for_update(ctx, size);
+      ObDatum *doc_lengths = doc_length_expr_->locate_datums_for_update(ctx, size);
+      for (int64_t i = 0; i < size; ++i) {
+        const WordEntry &entry = rows_[row_idx_ + i];
+        words[i].set_datum(entry.word_);
+        doc_ids[i].set_datum(doc_id);
+        word_counts[i].set_uint(entry.count_);
+        doc_lengths[i].set_uint(doc_length_);
+      }
+      for (ObExpr *expr : {word_expr_, doc_id_expr_, word_count_expr_, doc_length_expr_}) {
+        expr->set_evaluated_projected(ctx);
+      }
+      row_idx_ += size;
+      count = size;
+    }
+  }
+  return ret;
+}
+
 void ObFTIndexRowCache::reset()
 {
   rows_ = nullptr;

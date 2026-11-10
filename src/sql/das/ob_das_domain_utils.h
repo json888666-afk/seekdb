@@ -47,6 +47,7 @@ public:
       ObExpr *doc_length_expr);
   int segment(const common::ObObjMeta &ft_obj_meta, const ObDatum &doc_id, const common::ObString &fulltext);
   int get_next_row(ObEvalCtx &ctx);
+  int get_next_batch(ObEvalCtx &ctx, int64_t capacity, int64_t &count);
   ObExpr *word_expr() const { return word_expr_; }
   ObExpr *doc_id_expr() const { return doc_id_expr_; }
   void reset();
