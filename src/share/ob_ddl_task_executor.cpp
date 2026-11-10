@@ -15,6 +15,7 @@
  */
 
 #include "ob_ddl_task_executor.h"
+#include "lib/cpu/ob_cpu_topology.h"
 #include "lib/ob_running_mode.h"
 #include "lib/thread/ob_thread_name.h"
 #include "lib/stat/ob_diagnostic_info_guard.h"
@@ -350,7 +351,13 @@ int ObDDLLocalBuilder::push_task(ObAsyncTask &task)
 
 int64_t ObDDLLocalBuilder::get_thread_cnt_() const
 {
-  return lib::is_mini_mode() ? 1 : 16;
+  if (!lib::is_mini_mode()) {
+    return 16;
+  }
+  // Independent auxiliary index builds can overlap when a mini-mode server
+  // has room for two local builds. Keep one slot on smaller servers.
+  const int64_t memory_budget = lib::ObRunningModeConfig::instance().memory_budget_;
+  return memory_budget >= (4LL << 30) && common::get_cpu_count() >= 4 ? 2 : 1;
 }
 
 }  // end namespace share
