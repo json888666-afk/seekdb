@@ -538,6 +538,17 @@ int ObTextRetrievalDaaTTokenIter::save_docids()
   return ret;
 }
 
+int ObTextRetrievalDaaTTokenIter::get_next_id(const ObDatum *&id_datum)
+{
+  int ret = OB_SUCCESS;
+  if (OB_LIKELY(cur_idx_ + 1 < count_)) {
+    id_datum = &doc_id_.get_data()[++cur_idx_].get_datum();
+  } else if (OB_FAIL(get_next_row())) {
+  } else if (OB_FAIL(get_curr_id(id_datum))) {
+  }
+  return ret;
+}
+
 int ObTextRetrievalDaaTTokenIter::get_next_batch(const int64_t capacity, int64_t &count)
 {
   return OB_NOT_IMPLEMENT;

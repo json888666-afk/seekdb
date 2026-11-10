@@ -16,6 +16,14 @@ insert into daat_batch_projection select id + 20, body from daat_batch_projectio
 insert into daat_batch_projection select id + 40, body from daat_batch_projection;
 insert into daat_batch_projection select id + 80, body from daat_batch_projection;
 insert into daat_batch_projection select id + 160, body from daat_batch_projection;
+select count(*) as hits from daat_batch_projection
+  where match(body) against ('apple');
+select count(*) as hits from daat_batch_projection
+  where match(body) against ('apple banana');
+select count(*) as hits from daat_batch_projection
+  where match(body) against ('apple banana pear');
+select count(*) as hits from daat_batch_projection
+  where match(body) against ('missingword');
 select count(*), sum(id) from daat_batch_projection
   where match(body) against ('apple banana');
 select id, round(match(body) against ('apple banana'), 8) as score
