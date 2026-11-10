@@ -238,29 +238,32 @@ int ObSRDaaTIterImpl::get_next_rows(const int64_t capacity, int64_t &count)
         && dim_count <= ObSRSimpleMerger::USE_SIMPLE_MERGER_MAX_TABLE_CNT) {
       // Keep one head per posting list. Advance all heads equal to the minimum
       // together so each matching document contributes exactly one row.
+      const ObDatum **heads = iter_domain_ids_.get_data();
+      ObISRDaaTDimIter *iters[ObSRSimpleMerger::USE_SIMPLE_MERGER_MAX_TABLE_CNT];
+      for (int64_t i = 0; i < dim_count; ++i) {
+        iters[i] = dim_iters_->at(i);
+      }
       while (OB_SUCC(ret) && count < real_capacity) {
         for (int64_t i = 0; OB_SUCC(ret) && i < next_round_cnt_; ++i) {
           const int64_t idx = next_round_iter_idxes_[i];
-          ObISRDaaTDimIter *iter = dim_iters_->at(idx);
+          ObISRDaaTDimIter *iter = iters[idx];
           if (OB_ISNULL(iter)) {
             ret = OB_ERR_UNEXPECTED;
-          } else if (OB_FAIL(iter->get_next_row())) {
+          } else if (OB_FAIL(iter->get_next_id(heads[idx]))) {
             if (OB_ITER_END == ret) {
-              iter_domain_ids_[idx] = nullptr;
+              heads[idx] = nullptr;
               ret = OB_SUCCESS;
             }
-          } else if (OB_FAIL(iter->get_curr_id(iter_domain_ids_[idx]))) {
           }
         }
 
         next_round_cnt_ = 0;
-        ObSRMergeItem minimum;
+        const ObDatum *minimum = nullptr;
         for (int64_t i = 0; OB_SUCC(ret) && i < dim_count; ++i) {
-          if (OB_NOT_NULL(iter_domain_ids_[i])) {
-            ObSRMergeItem head;
-            head.iter_idx_ = i;
-            int64_t cmp = -1;
-            if (next_round_cnt_ > 0 && OB_FAIL(merge_cmp_.cmp(head, minimum, cmp))) {
+          const ObDatum *head = heads[i];
+          if (OB_NOT_NULL(head)) {
+            int cmp = -1;
+            if (OB_NOT_NULL(minimum) && OB_FAIL(merge_cmp_.cmp_ids(*head, *minimum, cmp))) {
             } else if (cmp <= 0) {
               if (cmp < 0) {
                 minimum = head;
