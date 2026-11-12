@@ -265,6 +265,61 @@ static void *ob_cuvs_raw_batch_job(void *arg) {
 
 static const size_t OB_CUVS_MIN_PTS = 256;  // CAGRA needs a graph; below this -> VSAG
 
+
+// One persistent 32MB-stack worker for the per-query path. Creating a fresh
+// pthread per query costs ~1.2 ms here (first HIP call binds the thread to the
+// device context); cuVS still needs the large stack, so the worker keeps it.
+struct ObCuvsWorker {
+  std::mutex mu;
+  std::condition_variable cv;
+  bool has_job = false;
+  bool done = false;
+  bool stop = false;
+  bool started = false;
+  ObCuvsJob *job = nullptr;
+  pthread_t tid = 0;
+};
+static ObCuvsWorker g_ob_cuvs_worker;
+
+static void *ob_cuvs_worker_main(void *) {
+  ObCuvsWorker &w = g_ob_cuvs_worker;
+  std::unique_lock<std::mutex> lk(w.mu);
+  for (;;) {
+    w.cv.wait(lk, [&] { return w.has_job || w.stop; });
+    if (w.stop) { return nullptr; }
+    ObCuvsJob *j = w.job;
+    lk.unlock();
+    ob_cuvs_job(j);
+    lk.lock();
+    w.has_job = false;
+    w.done = true;
+    w.cv.notify_all();
+  }
+}
+
+static bool ob_cuvs_run_query_job(ObCuvsJob &job) {
+  ObCuvsWorker &w = g_ob_cuvs_worker;
+  std::unique_lock<std::mutex> lk(w.mu);
+  if (!w.started) {
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 32UL * 1024 * 1024);
+    if (pthread_create(&w.tid, &attr, ob_cuvs_worker_main, nullptr) == 0) {
+      pthread_detach(w.tid);
+      w.started = true;
+    }
+    pthread_attr_destroy(&attr);
+    if (!w.started) { return false; }
+  }
+  w.job = &job;
+  w.has_job = true;
+  w.done = false;
+  w.cv.notify_all();
+  w.cv.wait(lk, [&] { return w.done; });
+  w.job = nullptr;
+  return true;
+}
+
 static bool ob_cuvs_try_search(void *key, vsag::Allocator *alloc,
                                const float *query, int /*dim*/, int64_t topk,
                                const float *&dist, const int64_t *&ids,
@@ -283,10 +338,7 @@ static bool ob_cuvs_try_search(void *key, vsag::Allocator *alloc,
   std::vector<unsigned> off(topk);
   std::vector<float> dst(topk);
   ObCuvsJob job{ent, query, topk, static_cast<int>(ent->dim_), n, need_build, &off, &dst, -1, false};
-  pthread_t tid; pthread_attr_t attr; pthread_attr_init(&attr);
-  pthread_attr_setstacksize(&attr, 32UL * 1024 * 1024);
-  if (pthread_create(&tid, &attr, ob_cuvs_job, &job) == 0) { pthread_join(tid, nullptr); }
-  pthread_attr_destroy(&attr);
+  ob_cuvs_run_query_job(job);
   if (job.built_) { ob_vsag_trace("cuvs_build", key, static_cast<long>(ent->dim_), static_cast<long>(n)); }
   if (ent->bridge_ == nullptr || job.rc_ != 0) { return false; }
   // Post-filter: cuVS returned UNFILTERED top-k. Apply the query's row filter
@@ -320,7 +372,7 @@ static bool ob_cuvs_try_search(void *key, vsag::Allocator *alloc,
   return true;
 }
 
-static const char OB_CUVS_SNAPSHOT_MAGIC[8] = {'O', 'B', 'C', 'U', 'V', 'S', '0', '2'};
+static const char OB_CUVS_SNAPSHOT_MAGIC[8] = {'O', 'B', 'C', 'U', 'V', 'S', '0', '3'};
 struct ObCuvsSnapshotFile {
   FILE *file_ = ::tmpfile();
   char path_[64] = {};
@@ -423,8 +475,10 @@ static bool ob_cuvs_serialize(void *key, std::ostream &out, int &ret) {
       !ob_cuvs_write(out, &dim32, sizeof(dim32)) ||
       !ob_cuvs_write(out, &reserved, sizeof(reserved)) ||
       !ob_cuvs_write(out, &n64, sizeof(n64)) ||
-      !ob_cuvs_write(out, ent->buf_ids_.data(), n * sizeof(int64_t)) ||
-      !ob_cuvs_write(out, ent->buf_vecs_.data(), ent->buf_vecs_.size() * sizeof(float))) {
+      !ob_cuvs_write(out, ent->buf_ids_.data(), n * sizeof(int64_t))) {
+  // The raw vector block is NOT written: the cuVS file below already carries the
+  // same dataset (include_dataset=true), and the static search path never reads
+  // buf_vecs_. Dropping the duplicate takes the snapshot 685MB -> 429MB.
     ret = OB_ERR_UNEXPECTED;
     LOG_WARN("[OBVSAG][cuVS] failed to write snapshot stream", K(ret), KP(key), K(n));
     return true;
@@ -467,9 +521,7 @@ static int ob_cuvs_deserialize(void *key, int expected_dim, std::istream &in) {
     ObCuvsEntry *ent = new ObCuvsEntry();
     ent->dim_ = dim32;
     ent->buf_ids_.resize(n);
-    ent->buf_vecs_.resize(n * static_cast<size_t>(dim32));
-    if (!ob_cuvs_read(in, ent->buf_ids_.data(), n * sizeof(int64_t)) ||
-        !ob_cuvs_read(in, ent->buf_vecs_.data(), ent->buf_vecs_.size() * sizeof(float))) {
+    if (!ob_cuvs_read(in, ent->buf_ids_.data(), n * sizeof(int64_t))) {
       delete ent;
       ret = OB_ERR_UNEXPECTED;
       LOG_WARN("[OBVSAG][cuVS] truncated snapshot payload", K(ret), KP(key), K(n64));
