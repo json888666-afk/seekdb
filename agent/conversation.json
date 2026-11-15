@@ -1,0 +1,121 @@
+{
+  "format_version": 1,
+  "synthetic": false,
+  "material_type": "actual_session_excerpt",
+  "date": "2026-11-15",
+  "timezone": "Asia/Shanghai",
+  "scope": "Visible user prompts, assistant implementation decisions and actual local tool results from this session. Excerpts are selected rather than a complete transcript. Assistant work is not attributed to the student. No hidden reasoning is included.",
+  "user_prompts": [
+    {
+      "id": "U1",
+      "source": "user",
+      "content": "请你完成这道题 https://open.oceanbase.com/train/TopicDetails?questionId=600081&subQesitonId=800517&subQuestionName=性能评测"
+    },
+    {
+      "id": "U2",
+      "source": "user",
+      "content": "先不用提测，我自己手动push就行，请你告诉我怎么操作"
+    }
+  ],
+  "conversations": [
+    {
+      "id": "A1",
+      "source": "assistant",
+      "content": "题目要求实现一个带 SQL、精确向量 TopK、事务和崩溃恢复的 MiniVectorDB，并在 Linux 容器中运行。我接下来查看配套题包和测试协议，再按评测要求实现。"
+    },
+    {
+      "id": "A2",
+      "source": "assistant",
+      "content": "已取得官方分支和 20 个公开样例。题包明确要求使用 JSONL 通信，与赛题介绍中的描述有出入，我会以题包协议为准。实现将使用自写磁盘存储和事务逻辑，并补测公开样例未覆盖的强杀恢复、非法向量和内存限制。"
+    },
+    {
+      "id": "A3",
+      "source": "assistant",
+      "content": "实现方案已确定：用写时复制 B+ 树保存主键与磁盘记录位置，提交时切换带校验的元数据。这样无需把全表载入内存，失败语句和未提交事务也能回滚。TopK 会使用有界堆，并先过滤、再计算距离。"
+    },
+    {
+      "id": "A4",
+      "source": "assistant",
+      "content": "第一版已通过官方全部 20 个公开样例，覆盖 95 条 SQL 以及重启、事务和 float32 语义。接下来会补上真正的向量块索引，并测试强杀恢复、失败语句原子性和大数据下的内存占用。"
+    },
+    {
+      "id": "A5",
+      "source": "assistant",
+      "content": "好的，我会把可直接推送的本地分支和材料整理好，附上手动 push 与提测步骤。最后再做一次构建和回归验证。"
+    }
+  ],
+  "implementation_records": [
+    {
+      "id": "I1",
+      "source": "assistant_summary",
+      "content": "Cloned oceanbase/seekdb branch 2026-competition-round2 at f4d4e26653af823a7601668802f80e374ad6643c and read STDIO_PROTOCOL.md and public case files. Chose the actual JSONL driver protocol over the older prose description of direct SQL stdin."
+    },
+    {
+      "id": "I2",
+      "source": "assistant_summary",
+      "content": "Implemented C++20 lexer, typed SQL execution, persistent COW primary-key B+ tree, statement rollback by allocation boundary, explicit transaction catalog roots, durable commit via data fsync then alternating checksummed manifest slots. Storage errors fail closed rather than acknowledging uncertain writes."
+    },
+    {
+      "id": "I3",
+      "source": "assistant_summary",
+      "content": "After the first public pass, added an actual immutable covering vector block index with metric-ball bounds and a COW mutation delta tree. Base entries covered by the delta are skipped; current delta rows are merged. Both exact and ann modes return exact results."
+    },
+    {
+      "id": "I4",
+      "source": "assistant_summary",
+      "content": "Added external merge sorting for ORDER BY without LIMIT and streamed JSON result rows. Added case-preserving column and alias labels while retaining case-insensitive identifier lookup; regression includes mixed-case identifiers."
+    }
+  ],
+  "experiments": [
+    {
+      "id": "E1",
+      "source": "tool_result",
+      "status": "executed",
+      "command": "python3 protocol_check/run.py --command '[\"/mnt/f/vs_space/minivectordb/build/minivectordb\",\"--data-dir\",\"{data_dir}\"]' --output protocol-results/public-v2",
+      "output": "sql_crud: PASS\nsql_comparisons: PASS\nsql_ordering: PASS\nsql_empty: PASS\nsql_primary_key: PASS\nsql_unicode: PASS\nsql_bigint: PASS\nsql_unsupported: PASS\nstorage_restart: PASS\nvector_euclidean: PASS\ntransaction_commit: PASS\ntransaction_rollback: PASS\nstorage_mutations: PASS\nstorage_multiple_tables: PASS\nvector_ties_and_filter: PASS\nvector_float32: PASS\nvector_index_maintenance: PASS\ntransaction_failed_insert: PASS\ntransaction_autocommit_atomic: PASS\ntransaction_shutdown_rollback: PASS"
+    },
+    {
+      "id": "E2",
+      "source": "tool_result",
+      "status": "executed",
+      "command": "python3 tests/test_engine.py",
+      "output": "test_external_sort_and_equal_keys ... ok\ntest_index_extreme_floats_and_ties ... ok\ntest_large_failed_statement_and_eviction ... ok\ntest_lexer_and_unicode_order ... ok\ntest_randomized_index_transactions_restarts ... ok\ntest_transactional_schema_and_recovery_interruption ... ok\ntest_types_sql_and_statement_atomicity ... ok\nRan 7 tests in 1.745s\nOK",
+      "context": "Actual final case-preservation regression run; test name prefixes and unittest class qualification shortened in this excerpt. A separate static-binary run is retained in validation/regression.txt."
+    },
+    {
+      "id": "E3",
+      "source": "tool_result",
+      "status": "executed",
+      "command": "python3 tests/test_engine.py --large-memory",
+      "output": "{\"rows\":150000,\"dimension\":256,\"address_space_limit_mib\":96,\"cache_mib\":4,\"database_bytes\":333334161,\"elapsed_seconds\":9.209,\"passed\":true}",
+      "interpretation_source": "assistant",
+      "interpretation": "The on-disk database exceeded the process address-space cap and the restart query still succeeded. This is evidence against an all-records-in-memory design, not a measurement of whole-container memory including file cache."
+    },
+    {
+      "id": "E4",
+      "source": "tool_result",
+      "status": "executed",
+      "command": "python3 tests/benchmark.py",
+      "output": "{\"scope\":\"local-diagnostic-only\",\"seed\":600081,\"rows\":10000,\"dimension\":128,\"batch_size\":100,\"queries\":1000,\"k\":10,\"filtered_queries\":500,\"oracle_checked_queries\":1000,\"write_seconds\":1.888781,\"index_seconds\":0.016591,\"query_seconds\":1.881566,\"process_peak_rss\":\"VmHWM: 6568 kB\",\"database_bytes\":12093396,\"passed\":true}",
+      "interpretation_source": "assistant",
+      "interpretation": "All 1000 result ID sequences and distances matched a Python math.dist oracle over stored float32 values, including 500 filtered queries. These timings and RSS are local diagnostics, not formal T/B/M, recall measurements on hidden data, or a competition score."
+    }
+  ],
+  "retrospective": [
+    {
+      "source": "assistant",
+      "content": "Public samples alone were insufficient evidence for crash safety and bounded memory. Added forced process termination, recovery interruption, page-cache eviction rollback and larger-than-address-space data tests."
+    },
+    {
+      "source": "assistant",
+      "content": "Exact block search was chosen for deterministic recall and simpler transaction maintenance. Metric bounds can be weak in high dimensions; no HNSW speed claim is made. Append-only history avoids in-place corruption of committed data but currently causes disk amplification without compaction."
+    }
+  ],
+  "limitations": [
+    "No prior student dialogue or student-authored technical explanation was provided. Do not attribute assistant design decisions or tool execution to the student.",
+    "Selected excerpts omit repetitive tool calls. No fabricated human questions, experiment failures, scores or learning claims have been added.",
+    "Docker CLI is unavailable in this environment. Actual image build and container protocol checks remain for the user's Docker machine or platform precheck.",
+    "The user explicitly requested no platform submission and will push manually. No formal evaluation was triggered.",
+    "Hidden test results, formal cgroup metrics, Agent scoring and leaderboard rank are unknown."
+  ]
+}

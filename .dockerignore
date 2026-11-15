@@ -1,0 +1,9 @@
+.git
+.agents
+.akfarm
+.akperformancetest
+.devcontainer
+.github
+build
+protocol-results
+__pycache__
