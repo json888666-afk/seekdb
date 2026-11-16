@@ -68,44 +68,56 @@ struct Filter {
         return !empty;
     }
 };
+inline void parse_where_atom(Parser &p, const Table &t, Filter &f) {
+    int col = t.column(p.identifier());
+    std::string op = p.next().text;
+    require(op == "=" || op == "<" || op == "<=" || op == ">" || op == ">=", "unsupported_sql",
+            "unsupported comparison");
+    require(t.columns[col].type != "vector", "unsupported_sql", "vector filtering is unsupported");
+    Value val = p.literal(t.columns[col]);
+    f.conditions.push_back({col, op, val});
+    if (col == t.pk) {
+        int64_t key = std::get<int64_t>(val);
+        if (op == "=") {
+            f.lo = std::max(f.lo, key);
+            f.hi = std::min(f.hi, key);
+        } else if (op == ">=")
+            f.lo = std::max(f.lo, key);
+        else if (op == "<=")
+            f.hi = std::min(f.hi, key);
+        else if (op == ">") {
+            if (key == INT64_MAX)
+                f.empty = true;
+            else
+                f.lo = std::max(f.lo, key + 1);
+        } else if (op == "<") {
+            if (key == INT64_MIN)
+                f.empty = true;
+            else
+                f.hi = std::min(f.hi, key - 1);
+        }
+    }
+}
+inline void parse_where_and(Parser &p, const Table &t, Filter &f);
+// 括号只改变 AND 分组，不引入 OR；未支持的写法留给 finish() 报 unsupported_sql。
+inline void parse_where_term(Parser &p, const Table &t, Filter &f) {
+    if (p.take("(")) {
+        parse_where_and(p, t, f);
+        p.expect(")");
+    } else {
+        parse_where_atom(p, t, f);
+    }
+}
+inline void parse_where_and(Parser &p, const Table &t, Filter &f) {
+    do {
+        parse_where_term(p, t, f);
+    } while (p.take("and"));
+}
 inline Filter parse_filter(Parser &p, const Table &t) {
     Filter f;
     if (!p.take("where"))
         return f;
-    do {
-        bool paren = p.take("(");
-        int col = t.column(p.identifier());
-        std::string op = p.next().text;
-        require(op == "=" || op == "<" || op == "<=" || op == ">" || op == ">=", "unsupported_sql",
-                "unsupported comparison");
-        require(t.columns[col].type != "vector", "unsupported_sql",
-                "vector filtering is unsupported");
-        Value val = p.literal(t.columns[col]);
-        f.conditions.push_back({col, op, val});
-        if (paren)
-            p.expect(")");
-        if (col == t.pk) {
-            int64_t key = std::get<int64_t>(val);
-            if (op == "=") {
-                f.lo = std::max(f.lo, key);
-                f.hi = std::min(f.hi, key);
-            } else if (op == ">=")
-                f.lo = std::max(f.lo, key);
-            else if (op == "<=")
-                f.hi = std::min(f.hi, key);
-            else if (op == ">") {
-                if (key == INT64_MAX)
-                    f.empty = true;
-                else
-                    f.lo = std::max(f.lo, key + 1);
-            } else if (op == "<") {
-                if (key == INT64_MIN)
-                    f.empty = true;
-                else
-                    f.hi = std::min(f.hi, key - 1);
-            }
-        }
-    } while (p.take("and"));
+    parse_where_and(p, t, f);
     f.empty = f.empty || f.lo > f.hi;
     return f;
 }

@@ -1,0 +1,33 @@
+{
+  "scope": "local-diagnostic-only",
+  "method": "same host, same seed, same workload; only src/ differs",
+  "workload": {
+    "rows": 10000,
+    "dimension": 128,
+    "queries": 1000,
+    "k": 10,
+    "filtered_queries": 500,
+    "oracle_checked_queries": 1000,
+    "seed": 600081
+  },
+  "baseline": {
+    "description": "ad5e5a3a source, unmodified",
+    "write_seconds": 1.223023,
+    "index_seconds": 0.018644,
+    "query_seconds": 2.298565,
+    "process_peak_rss": "VmHWM:\t    5120 kB",
+    "passed": true
+  },
+  "round2": {
+    "description": "index blob cache + k-th distance pruning",
+    "write_seconds": 1.227573,
+    "index_seconds": 0.018704,
+    "query_seconds": 1.290202,
+    "process_peak_rss": "VmHWM:\t   10240 kB",
+    "passed": true
+  },
+  "ratio": {
+    "query_seconds": 0.5613
+  },
+  "note": "Both binaries were built with the Makefile defaults on the same machine and verified against the same independent oracle. Not an official score."
+}

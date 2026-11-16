@@ -1,0 +1,29 @@
+{
+  "scope": "local-diagnostic-only",
+  "seed": 600081,
+  "rows": 10000,
+  "dimension": 128,
+  "batch_size": 100,
+  "queries": 1000,
+  "k": 10,
+  "filtered_queries": 500,
+  "oracle_checked_queries": 1000,
+  "database_bytes": 12093396,
+  "passed": true,
+  "note": "Local wall time on the verification host; includes Python request construction. Not official T/B/M or score.",
+  "write_seconds": 1.196487,
+  "index_seconds": 0.018277,
+  "query_seconds": 1.33365,
+  "process_peak_rss": "VmHWM:\t    8192 kB",
+  "constraints": {
+    "cpus": 2,
+    "cpu_mechanism": "taskset -c 0,1",
+    "address_space_bytes": 2147483648,
+    "rss_bytes": 2147483648,
+    "pids_limit": 128,
+    "capabilities": "none (non-root via setpriv)",
+    "no_new_privs": true,
+    "read_only_root": "simulated: non-root can only write the data dir",
+    "note": "Native equivalents of docker run flags. No Docker container was started; no cgroup memory.peak was read."
+  }
+}

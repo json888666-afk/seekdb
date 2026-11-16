@@ -1,1 +1,18 @@
-{"scope": "local-diagnostic-only", "seed": 600081, "rows": 10000, "dimension": 128, "batch_size": 100, "queries": 1000, "k": 10, "filtered_queries": 500, "oracle_checked_queries": 1000, "write_seconds": 1.888781, "index_seconds": 0.016591, "query_seconds": 1.881566, "process_peak_rss": "VmHWM:\t    6568 kB", "database_bytes": 12093396, "passed": true, "note": "WSL local wall time; includes Python request construction. Not official T/B/M or score."}
+{
+  "scope": "local-diagnostic-only",
+  "seed": 600081,
+  "rows": 10000,
+  "dimension": 128,
+  "batch_size": 100,
+  "queries": 1000,
+  "k": 10,
+  "filtered_queries": 500,
+  "oracle_checked_queries": 1000,
+  "database_bytes": 12093396,
+  "passed": true,
+  "note": "Local wall time on the verification host; includes Python request construction. Not official T/B/M or score.",
+  "write_seconds": 1.227573,
+  "index_seconds": 0.018704,
+  "query_seconds": 1.290202,
+  "process_peak_rss": "VmHWM:\t   10240 kB"
+}

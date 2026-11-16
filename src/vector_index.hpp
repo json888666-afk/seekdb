@@ -68,9 +68,9 @@ class VectorIndex {
     template <class Threshold, class Emit>
     void visit(uint64_t off, const std::vector<float> &query, int64_t lo, int64_t hi,
                Threshold &threshold, Emit &emit) {
-        std::string data = store.read_blob(off);
-        const char *p = data.data();
-        const char *e = p + data.size();
+        auto data = store.read_blob_cached(off);
+        const char *p = data->data();
+        const char *e = p + data->size();
         auto leaf = get<uint8_t>(p, e);
         Ref self = decode_ref(p, e);
         uint32_t count = get<uint32_t>(p, e);
@@ -85,8 +85,13 @@ class VectorIndex {
                     throw std::runtime_error("corrupt vector block");
                 if (key >= lo && key <= hi &&
                     (!table.delta_root || !store.find(table.delta_root, key))) {
-                    auto row = Store::decode_row(table, p, p + size);
-                    emit(key, rowoff, row);
+                    // 精确剪枝：distance 超过当前第 K 名就不必构造整行 Value。
+                    const char *vector = reinterpret_cast<const char *>(
+                        Store::row_vector(table, p));
+                    if (l2(vector, query, dim) <= threshold()) {
+                        auto row = Store::decode_row(table, p, p + size);
+                        emit(key, rowoff, row);
+                    }
                 }
                 p += size;
             }

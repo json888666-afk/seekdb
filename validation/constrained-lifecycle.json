@@ -1,0 +1,38 @@
+{
+  "scope": "local-diagnostic-only",
+  "binary": "src/main.cpp built with the Dockerfile flags (-O3 -static -ffp-contract=off)",
+  "binary_bytes": 2714352,
+  "binary_linking": "statically linked; ldd reports 'not a dynamic executable'",
+  "constraints": {
+    "cpus": 2,
+    "address_space_bytes": 2147483648,
+    "pids_limit": 128,
+    "run_as": "non-root user with no capabilities and no-new-privs",
+    "writable_paths": "data directory only"
+  },
+  "checks": [
+    {
+      "id": "cold_start_crud_vector",
+      "status": "passed",
+      "detail": "ready handshake, CREATE/INSERT, L2 TopK returned ids [1,2], clean shutdown rc=0",
+      "process_peak_kb": 1024
+    },
+    {
+      "id": "sigkill_mid_transaction_recovery",
+      "status": "passed",
+      "detail": "SIGKILL inside an open transaction; after restart the committed 3 rows survived and the uncommitted insert was rolled back"
+    },
+    {
+      "id": "no_writes_outside_data_dir",
+      "status": "passed",
+      "detail": "full CRUD, index build, update and delete succeeded as a non-root user with no writable path outside the data directory; stderr contained no permission error"
+    },
+    {
+      "id": "large_dataset_under_2gib",
+      "status": "passed",
+      "detail": "150000 rows x 256 dims inserted in 14.2 s; TopK query returned 10 rows; database 163.4 MiB",
+      "process_peak_kb": 19812
+    }
+  ],
+  "note": "Resource constraints were applied with taskset/prlimit/setpriv, not by a Docker container. Process VmHWM is not container memory.peak."
+}

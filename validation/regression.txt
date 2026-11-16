@@ -10,3 +10,14 @@ test_types_sql_and_statement_atomicity (__main__.EngineTests.test_types_sql_and_
 Ran 7 tests in 3.090s
 
 OK
+
+=== 2026-11-16 round-2 re-verification (fresh Linux x86_64 host, gcc 13.3) ===
+protocol_check public cases: 20/20 PASS (passed=true)
+tests/test_engine.py: Ran 7 tests ... OK
+tests/test_engine.py --large-memory: {"rows": 150000, "dimension": 256, "address_space_limit_mib": 96, "cache_mib": 4, "database_bytes": 333334161, "elapsed_seconds": 8.05, "passed": true}
+tests/benchmark.py baseline src: write 1.223023 s, index 0.018644 s, query 2.298565 s, VmHWM 5120 kB, passed=true
+tests/benchmark.py round-2 src: write 1.227573 s, index 0.018704 s, query 1.290202 s, VmHWM 10240 kB, passed=true
+constrained protocol (2 cpu / 2 GiB / 128 pid / non-root / no-new-privs): 20/20 PASS
+constrained benchmark: write 1.196487 s, index 0.018277 s, query 1.333650 s, VmHWM 8192 kB, passed=true
+constrained lifecycle: cold start VmHWM 1024 kB; SIGKILL recovery kept 3 committed rows; data-dir-only writes; 150k x 256 VmHWM 19812 kB
+static build with Dockerfile flags: 2714352 bytes, statically linked, "not a dynamic executable"

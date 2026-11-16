@@ -1,9 +1,9 @@
 {
   "scope": "local_material_format_and_reference_check_only",
   "passed": true,
-  "material_bytes": 43207,
+  "material_bytes": 46049,
   "max_bytes": 131072,
-  "material_sha256": "17ea7b5802aa0be8d1b716373370e9ac374c7432262ad387fc0f3d9e8783f3ab",
+  "material_sha256": "99e26c6e0f60d47366e2041bc73d9929d883377759a0191c01dfa8ded146a002",
   "checked_citations": 6,
   "evidence_units": 3,
   "student_records": 2,

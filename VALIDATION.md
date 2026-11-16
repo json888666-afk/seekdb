@@ -58,3 +58,69 @@ MINIVECTORDB_BINARY="$PWD/build/minivectordb-asan" python3 tests/test_engine.py
 新增 `agent/check_material.py` 检查材料格式、大小、严格 JSON、证据引用和来源。它不计算正式分数，不判断真人学习效果；检查结果在 `validation/material-check.json`。数据库实现和 Dockerfile 与 `b7be60a484387e27ea79dd29e8ab8f09d3877996` 保持一致，源码指纹随材料交付。
 
 用户随后回复“你自己回答”，将实验后的复盘交给 Agent。材料已记录 Agent 对上述结果的解释和局限，并将下一轮容器级资源预算验证列为未执行计划；这些内容没有记为新的学生技术贡献或新的实测结果。
+
+## 2026-11-16（接力第二轮）：缺陷修复、检索加速与容器约束验证
+
+### 源码改动
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/storage.hpp` | 新增有序块缓存 `blob_cache`（上限 24 MiB，`rollback()` 时清空）；`read_blob_cached()` 返回共享块，避免重复 `pread` |
+| `src/storage.hpp` | MANIFEST 无有效槽且数据目录非空时不再直接抛错，截断到首页并重建空目录，消除首次 COMMIT 前被强杀后无法启动的窗口 |
+| `src/engine.hpp` | WHERE 支持括号分组的 AND；OR 仍明确报 `unsupported_sql` |
+| `src/sql.hpp` | 新增 `l2(const char*, const std::vector<float>&, size_t)`，按行体字节直接算距离，归约顺序与原重载一致 |
+| `src/vector_index.hpp` | 叶节点先比较第 K 名距离，超过阈值直接跳过整行解码 |
+
+### 同机 A/B
+
+同一台机器、同一 seed、同一工作负载，只更换 `src/`：
+
+| 版本 | 写入 | 建索引 | 1000 次查询 | 进程 VmHWM |
+| --- | --- | --- | --- | --- |
+| `ad5e5a3a` 原始源码 | 1.223023 s | 0.018644 s | 2.298565 s | 5120 kB |
+| 本轮源码 | 1.227573 s | 0.018704 s | **1.290202 s** | 10240 kB |
+
+查询耗时降到原来的 0.561 倍，写入与建索引基本不变；代价是新增约 5 MiB 常驻块缓存（上限 24 MiB）。
+两种版本都通过了 `benchmark.py` 对 1000 次查询的独立真值核对。
+
+### 回归结果
+
+| 检查 | 结果 |
+| --- | --- |
+| `protocol_check/run.py` 公开用例 | 20/20 PASS（`passed=true`） |
+| `tests/test_engine.py` | 7/7 OK |
+| `tests/test_engine.py --large-memory`（150,000×256，96 MiB 地址空间） | passed，库 333,334,161 字节，8.05 s |
+| `tests/benchmark.py`（10k×128，1000 次 TopK=10，1000 次真值核对） | passed |
+
+### 容器约束等价验证
+
+验证机是嵌套容器：`unshare` 对 root 与非 root 均返回 `Operation not permitted`（缺少 `CAP_SYS_ADMIN`），
+Docker 与 cgroup 层级都不可用于创建容器，因此**没有构建或启动真实镜像**，也没有读取 cgroup `memory.peak`。
+改为用原生工具逐项等价判题的 `docker run` 约束：
+
+| `docker run` 参数 | 本机等价做法 |
+| --- | --- |
+| `--cpus=2` | `taskset -c 0,1` |
+| `--memory=2g --memory-swap=2g` | `prlimit --as=2147483648 --rss=2147483648` |
+| `--pids-limit=128` | `prlimit --nproc=128` |
+| `--cap-drop=ALL` | `setpriv` 切到非 root，无 capability |
+| `--security-opt=no-new-privileges` | `setpriv --no-new-privs` |
+| `--read-only` | 非 root 运行，仅数据目录可写，其它路径写入必然 EACCES |
+| `--network=none` | 程序只使用 stdin/stdout/stderr 与数据目录，不创建 socket |
+
+Dockerfile 的命令行在验证机上原样执行通过：无警告，产物 2,714,352 字节，静态链接，
+`ldd` 输出 `not a dynamic executable`。这只证明编译步骤可重现，不等于镜像已验证。
+
+| 约束下的检查 | 结果 |
+| --- | --- |
+| 公开协议 | 20/20 PASS |
+| 冷启动、CRUD、L2 TopK | PASS，VmHWM 1024 kB，shutdown 退出码 0 |
+| 事务中途 SIGKILL → 重启 | PASS，已提交 3 行保留，未提交插入回滚 |
+| 只读根文件系统模拟 | PASS，数据目录外无写入权限错误 |
+| 150,000×256 数据集 | PASS，VmHWM 19,812 kB，库 163.4 MiB |
+| benchmark | PASS，写入 1.196487 s，查询 1.333650 s，VmHWM 8192 kB |
+
+### 仍未验证
+
+真实 `docker build` / `docker run`、cgroup v2 `memory.peak`、平台隐藏用例、正式提测、正式性能分与 Agent 分。
+上面的内存数字都是进程 `VmHWM`，不能当作容器内存。

@@ -276,4 +276,15 @@ inline double l2(const std::vector<float> &a, const std::vector<float> &b) {
     }
     return std::sqrt(sum);
 }
+// 直接按行体内的小端 float 计算，避免为剪枝构造整行 Value；归约顺序与上面一致。
+inline double l2(const char *a, const std::vector<float> &b, size_t n) {
+    double sum = 0;
+    for (size_t i = 0; i < n; ++i) {
+        float x;
+        std::memcpy(&x, a + i * sizeof(float), sizeof(x));
+        double d = double(x) - double(b[i]);
+        sum += d * d;
+    }
+    return std::sqrt(sum);
+}
 } // namespace mini

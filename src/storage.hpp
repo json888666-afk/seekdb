@@ -2,9 +2,11 @@
 #include "sql.hpp"
 #include <array>
 #include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <functional>
 #include <list>
+#include <memory>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <unordered_map>
@@ -131,6 +133,10 @@ class Store {
     std::list<uint64_t> lru;
     size_t cache_limit;
     Manifest current;
+    // 向量索引块按偏移追加且不再改写，可跨语句复用；上限固定，避免大表被整体载入。
+    std::unordered_map<uint64_t, std::shared_ptr<const std::string>> blob_cache;
+    size_t blob_cache_bytes = 0;
+    static constexpr size_t kBlobCacheLimit = 24u << 20;
     void save_raw(uint64_t off, const Node &node) {
         std::array<char, PAGE> bytes{};
         std::memcpy(bytes.data(), &node, sizeof(node));
@@ -195,10 +201,18 @@ class Store {
             }
         }
         if (!found) {
-            if (ms.st_size != 0 || ds.st_size > off_t(PAGE))
-                throw std::runtime_error("no valid commit manifest");
+            // 没有任何可读的已提交状态：store.bin 超出首页的部分只能来自未确认的写入。
+            // 取消 COMMIT 的进程可能只把记录/目录追加进 store.bin，而 MANIFEST 尚未落盘
+            // （或只写了半个槽），此时必须按“未提交”丢弃尾部并重建空库，而不是拒绝启动。
+            if (ds.st_size > off_t(PAGE) || ms.st_size != 0)
+                std::fprintf(stderr,
+                             "recovery: no valid commit manifest, discarding %lld uncommitted "
+                             "bytes\n",
+                             static_cast<long long>(ds.st_size - off_t(PAGE)));
             if (ftruncate(fd, PAGE) < 0 || fsync(fd) < 0)
                 io_error("initialize store");
+            current = Manifest{};
+            end = PAGE;
             commit(Catalog{});
         } else {
             end = current.end;
@@ -277,6 +291,8 @@ class Store {
                 it = cache.erase(it);
             } else
                 ++it;
+        blob_cache.clear();
+        blob_cache_bytes = 0;
         end = to;
         if (ftruncate(fd, end) < 0)
             io_error("truncate rollback");
@@ -367,6 +383,30 @@ class Store {
         std::string out(len, '\0');
         read_at(fd, out.data(), len, off + 4);
         return out;
+    }
+    // 索引块跨语句复用：TopK 每次都会重读整棵树，缓存后避免重复 pread 与整块拷贝。
+    std::shared_ptr<const std::string> read_blob_cached(uint64_t off) {
+        auto it = blob_cache.find(off);
+        if (it != blob_cache.end())
+            return it->second;
+        auto blob = std::make_shared<std::string>(read_blob(off));
+        if (blob_cache_bytes + blob->size() <= kBlobCacheLimit) {
+            blob_cache_bytes += blob->size();
+            blob_cache.emplace(off, blob);
+        }
+        return blob;
+    }
+    static const float *row_vector(const Table &t, const char *p) {
+        for (int i = 0; i < t.vector_col; ++i) {
+            if (t.columns[i].type == "bigint")
+                p += sizeof(int64_t);
+            else {
+                uint32_t n;
+                std::memcpy(&n, p, sizeof(n));
+                p += sizeof(n) + n;
+            }
+        }
+        return reinterpret_cast<const float *>(p);
     }
     uint64_t find(uint64_t root, int64_t key) {
         while (root) {
