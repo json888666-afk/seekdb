@@ -1,12 +1,12 @@
 {
   "scope": "local_material_format_and_reference_check_only",
   "passed": true,
-  "material_bytes": 37501,
+  "material_bytes": 43207,
   "max_bytes": 131072,
-  "material_sha256": "3dafb146e00baafb29f2e58db669901a0ecac17b865bac9e9df830f107f33967",
+  "material_sha256": "17ea7b5802aa0be8d1b716373370e9ac374c7432262ad387fc0f3d9e8783f3ab",
   "checked_citations": 6,
   "evidence_units": 3,
-  "student_records": 1,
+  "student_records": 2,
   "official_score": null,
   "note": "Format and exact reference validity do not establish a score, rank, or completeness of learning evidence."
 }

@@ -80,6 +80,20 @@
       "source": "assistant",
       "date": "2026-11-16",
       "content": "结合刚才的实测结果，请补一段你的复盘：这些结果分别支持了什么结论、还不能证明什么？如果下一轮只能增加一种验证，你会选哪一种，为什么？这段回答会与前面的预测及实际结果一起保留。"
+    },
+    {
+      "id": "SU2",
+      "source": "user",
+      "date": "2026-11-16",
+      "content": "你自己回答",
+      "context": "Actual response to AQ2. The user delegated the retrospective to the assistant; this is not a student-authored technical retrospective."
+    },
+    {
+      "id": "A8",
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "1. 过滤与 TopK：四条记录的反例支持“必须在满足过滤条件的集合中取 TopK”。全表最近的两条记录都不满足条件，后置过滤为空，而正确查询返回 ID [3,4]。这说明了两种执行顺序为何不等价，并验证了当前程序在该实例上的行为；不能由一个反例的正确处理推断所有过滤组合、距离并列、数据规模和索引更新路径都正确，也不能据此判断正式性能排名。\n2. 提交与强杀恢复：三轮均在收到 COMMIT 成功响应后 SIGKILL，重启后已提交行和向量距离完整；额外未提交事务的插入、更新和删除也在重启后全部回滚。这支持当前实例中的已确认提交持久性，以及普通记录与向量检索的恢复一致性。但只覆盖了有限的强杀时机，尚未穷举提交过程中各个写入点；发送 COMMIT 后尚未收到响应就被终止的情况也不能直接按已确认提交判定。实验没有模拟断电或磁盘损坏，这两类故障也不属于本题限定的进程强杀模型。\n3. 内存口径：/proc 显示 Max address space 为 100663296 字节，支持“此前施加的是 96 MiB 进程虚拟地址空间限制”这一判断。此前较大数据库写入、建索引和重启测试通过，说明该测试不依赖全表常驻进程地址空间。但这些结果没有测量整个容器的峰值内存，不能证明包含文件页缓存及其他进程开销的 Docker 容器也低于 96 MiB；VmSize、VmRSS、VmHWM 也不能互相替代。\n如果下一轮只能增加一种验证，我选择真实 Linux Docker/cgroup v2 环境下的完整资源预算验证：设置明确的内存上限并禁用 swap，完成冷启动、数据装载、建索引、TopK 和强杀重启，读取容器对应 cgroup 的 memory.peak、内存上限及 OOM 事件，同时核对结果正确性。理由是当前容器级资源口径仍缺少直接证据，重复进程级限制测试不能补上这一缺口。96 MiB 压力测试与正式题包资源预算应分别标注，不能混用。这个下一轮验证目前仅为计划，尚未执行。",
+      "context": "Assistant retrospective requested by SU2, based on existing E8-E10 and E3 results. It is not additional student evidence and does not report a new experiment."
     }
   ],
   "implementation_records": [
@@ -213,6 +227,12 @@
     {
       "source": "assistant",
       "content": "Exact block search was chosen for deterministic recall and simpler transaction maintenance. Metric bounds can be weak in high dimensions; no HNSW speed claim is made. Append-only history avoids in-place corruption of committed data but currently causes disk amplification without compaction."
+    },
+    {
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "1. 过滤与 TopK：四条记录的反例支持“必须在满足过滤条件的集合中取 TopK”。全表最近的两条记录都不满足条件，后置过滤为空，而正确查询返回 ID [3,4]。这说明了两种执行顺序为何不等价，并验证了当前程序在该实例上的行为；不能由一个反例的正确处理推断所有过滤组合、距离并列、数据规模和索引更新路径都正确，也不能据此判断正式性能排名。\n2. 提交与强杀恢复：三轮均在收到 COMMIT 成功响应后 SIGKILL，重启后已提交行和向量距离完整；额外未提交事务的插入、更新和删除也在重启后全部回滚。这支持当前实例中的已确认提交持久性，以及普通记录与向量检索的恢复一致性。但只覆盖了有限的强杀时机，尚未穷举提交过程中各个写入点；发送 COMMIT 后尚未收到响应就被终止的情况也不能直接按已确认提交判定。实验没有模拟断电或磁盘损坏，这两类故障也不属于本题限定的进程强杀模型。\n3. 内存口径：/proc 显示 Max address space 为 100663296 字节，支持“此前施加的是 96 MiB 进程虚拟地址空间限制”这一判断。此前较大数据库写入、建索引和重启测试通过，说明该测试不依赖全表常驻进程地址空间。但这些结果没有测量整个容器的峰值内存，不能证明包含文件页缓存及其他进程开销的 Docker 容器也低于 96 MiB；VmSize、VmRSS、VmHWM 也不能互相替代。\n如果下一轮只能增加一种验证，我选择真实 Linux Docker/cgroup v2 环境下的完整资源预算验证：设置明确的内存上限并禁用 swap，完成冷启动、数据装载、建索引、TopK 和强杀重启，读取容器对应 cgroup 的 memory.peak、内存上限及 OOM 事件，同时核对结果正确性。理由是当前容器级资源口径仍缺少直接证据，重复进程级限制测试不能补上这一缺口。96 MiB 压力测试与正式题包资源预算应分别标注，不能混用。这个下一轮验证目前仅为计划，尚未执行。",
+      "context": "Same A8 text repeated for navigation only; not a new evidence unit and not student-authored."
     }
   ],
   "limitations": [
@@ -220,7 +240,7 @@
     "Selected excerpts omit repetitive tool calls. No fabricated questions, experiments, user learning claims or official scores are included.",
     "SU1 answers were elicited by AQ1. The assistant designed the concrete four-row TopK counterexample and extended the user-proposed crash check to an uncommitted transaction. These assistant additions are not attributed to the student.",
     "The Max address space inspection and earlier larger-than-address-space workload are process-level checks. Docker/cgroup v2 memory.peak verification remains unexecuted in the current environment.",
-    "The optional retrospective AQ2 is awaiting a user response at the time of this material revision. No post-experiment student explanation is invented.",
+    "AQ2 was answered with the actual user instruction “你自己回答”. The assistant supplied A8. No student-authored post-experiment retrospective is present, and no additional student learning unit is claimed.",
     "L1-L3 are an organizational index with no assigned scores. Their student excerpts and result excerpts are separate, non-reused spans. No claim is made that all five grading dimensions are covered.",
     "The user will push manually. No platform precheck or formal submission has been triggered by the assistant."
   ],
@@ -339,5 +359,15 @@
     "formal_agent_review": "not_executed",
     "formal_score": null,
     "formal_rank": null
-  }
+  },
+  "planned_experiments": [
+    {
+      "source": "assistant",
+      "status": "planned_not_executed",
+      "topic": "Docker/cgroup v2 whole-container resource budget",
+      "content": "Run the full lifecycle under an explicitly recorded container memory limit with swap disabled, record memory.peak and OOM events, and verify ordinary and vector results after recovery. Distinguish a 96 MiB stress workload from the official frozen resource budget.",
+      "reason": "The existing RLIMIT_AS experiments do not establish whole-container memory usage.",
+      "execution_result": null
+    }
+  ]
 }

@@ -56,3 +56,5 @@ MINIVECTORDB_BINARY="$PWD/build/minivectordb-asan" python3 tests/test_engine.py
 - `/proc/<pid>/limits` 明确显示 `Max address space` 为 100,663,296 字节，等于 96 MiB；同时记录 VmSize、VmRSS、VmHWM。该检查没有测量 Docker 容器 memory.peak；当前环境未发现 Docker CLI 和本地 cgroup v2 入口。
 
 新增 `agent/check_material.py` 检查材料格式、大小、严格 JSON、证据引用和来源。它不计算正式分数，不判断真人学习效果；检查结果在 `validation/material-check.json`。数据库实现和 Dockerfile 与 `b7be60a484387e27ea79dd29e8ab8f09d3877996` 保持一致，源码指纹随材料交付。
+
+用户随后回复“你自己回答”，将实验后的复盘交给 Agent。材料已记录 Agent 对上述结果的解释和局限，并将下一轮容器级资源预算验证列为未执行计划；这些内容没有记为新的学生技术贡献或新的实测结果。
