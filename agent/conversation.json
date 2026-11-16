@@ -1,10 +1,10 @@
 {
-  "format_version": 1,
+  "format_version": 2,
   "synthetic": false,
-  "material_type": "actual_session_excerpt",
+  "material_type": "actual_session_with_guided_learning",
   "date": "2026-11-15",
   "timezone": "Asia/Shanghai",
-  "scope": "Visible user prompts, assistant implementation decisions and actual local tool results from this session. Excerpts are selected rather than a complete transcript. Assistant work is not attributed to the student. No hidden reasoning is included.",
+  "scope": "Selected actual records from the implementation session and the subsequent guided learning session. The learning questions were posed by the assistant; the student answers are preserved verbatim and are not presented as spontaneous design decisions. Historical experiments and new checks are dated separately. Source code, hidden reasoning, repetitive tool calls and unrelated GitHub login screenshots are omitted. Every scored-evidence candidate below is anchored to text in this JSON; no score is assigned locally.",
   "user_prompts": [
     {
       "id": "U1",
@@ -15,6 +15,13 @@
       "id": "U2",
       "source": "user",
       "content": "先不用提测，我自己手动push就行，请你告诉我怎么操作"
+    },
+    {
+      "id": "U3",
+      "source": "user",
+      "date": "2026-11-16",
+      "content": "请你继续做这道题 https://open.oceanbase.com/train/TopicDetails?questionId=600081&subQesitonId=800518&subQuestionName=Agent%20Prompt%20%E8%AF%84%E4%BB%B7",
+      "representation": "Markdown link normalized to visible text and URL; meaning unchanged."
     }
   ],
   "conversations": [
@@ -42,6 +49,37 @@
       "id": "A5",
       "source": "assistant",
       "content": "好的，我会把可直接推送的本地分支和材料整理好，附上手动 push 与提测步骤。最后再做一次构建和回归验证。"
+    },
+    {
+      "id": "AQ1",
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "请用自己的话简短回答，供本题记录真实学习过程：① 为什么“先全表取 TopK，再过滤”可能得到错误结果？② 要验证 COMMIT 后强杀进程仍不丢数据，你会怎样安排测试顺序？③ 96 MiB 进程内存限制下测试通过，是否足以证明整个 Docker 容器内存也不超过 96 MiB，为什么？不确定的地方直接说明即可。"
+    },
+    {
+      "id": "SU1",
+      "source": "user",
+      "date": "2026-11-16",
+      "content": "① 先全表取 TopK，再过滤： 因为 TopK 可能被不符合条件的数据占据，后续过滤会导致符合条件的结果被提前排除，最终返回的数据不足 K 条，甚至遗漏真正应该返回的结果。正确做法是先过滤，再对符合条件的数据排序取 TopK。\n② COMMIT 后强杀进程测试： 先执行写入事务，确认 COMMIT 成功返回，再立即使用 kill -9 强制终止数据库进程。随后重启数据库，查询刚才提交的数据是否完整。还应多次重复测试，并检查数据一致性，确保不是只保存在内存中。\n③ 96 MiB 内存限制： 不足以证明。进程内存测试通常只统计被测进程的内存，而 Docker 容器还可能包含其他进程、共享内存、文件缓存等开销。因此需要通过 Docker 的 cgroup 内存统计进一步验证整个容器是否满足 96 MiB 限制。",
+      "context": "Verbatim answer to AQ1, received before running the new targeted checks."
+    },
+    {
+      "id": "A6",
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "我会把这三段回答按原文保存，并按你提出的顺序做“COMMIT 成功后强杀、重启核对”的测试。第三点也会标明测量口径：之前使用的是 RLIMIT_AS 虚拟地址空间限制，不能据此推断整个容器的内存峰值。"
+    },
+    {
+      "id": "A7",
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "结果支持你的判断：反例中，全表 Top2 被不符合条件的记录占据，后置过滤得到空集，而正确查询返回了两条；三轮“提交确认后强杀”均保留了数据和向量结果，另一个未提交事务则完整回滚。内存检查也确认了限制作用于进程地址空间，尚未测量 Docker 容器峰值。"
+    },
+    {
+      "id": "AQ2",
+      "source": "assistant",
+      "date": "2026-11-16",
+      "content": "结合刚才的实测结果，请补一段你的复盘：这些结果分别支持了什么结论、还不能证明什么？如果下一轮只能增加一种验证，你会选哪一种，为什么？这段回答会与前面的预测及实际结果一起保留。"
     }
   ],
   "implementation_records": [
@@ -99,6 +137,72 @@
       "output": "{\"scope\":\"local-diagnostic-only\",\"seed\":600081,\"rows\":10000,\"dimension\":128,\"batch_size\":100,\"queries\":1000,\"k\":10,\"filtered_queries\":500,\"oracle_checked_queries\":1000,\"write_seconds\":1.888781,\"index_seconds\":0.016591,\"query_seconds\":1.881566,\"process_peak_rss\":\"VmHWM: 6568 kB\",\"database_bytes\":12093396,\"passed\":true}",
       "interpretation_source": "assistant",
       "interpretation": "All 1000 result ID sequences and distances matched a Python math.dist oracle over stored float32 values, including 500 filtered queries. These timings and RSS are local diagnostics, not formal T/B/M, recall measurements on hidden data, or a competition score."
+    },
+    {
+      "id": "E5",
+      "source": "tool_result",
+      "date": "2026-11-15",
+      "status": "executed",
+      "context": "Final static binary, official interactive public driver, 20 cases and 95 SQL statements.",
+      "artifact_path": "validation/public.json",
+      "output": "{\n  \"scope\": \"public-protocol-check\",\n  \"passed\": true,\n  \"cases\": [\n    {\n      \"id\": \"sql_crud\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 111\n    },\n    {\n      \"id\": \"sql_comparisons\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 107\n    },\n    {\n      \"id\": \"sql_ordering\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 106\n    },\n    {\n      \"id\": \"sql_empty\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 106\n    },\n    {\n      \"id\": \"sql_primary_key\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 104\n    },\n    {\n      \"id\": \"sql_unicode\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 102\n    },\n    {\n      \"id\": \"sql_bigint\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 103\n    },\n    {\n      \"id\": \"sql_unsupported\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 98\n    },\n    {\n      \"id\": \"storage_restart\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 185\n    },\n    {\n      \"id\": \"vector_euclidean\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 104\n    },\n    {\n      \"id\": \"transaction_commit\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 113\n    },\n    {\n      \"id\": \"transaction_rollback\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 108\n    },\n    {\n      \"id\": \"storage_mutations\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 218\n    },\n    {\n      \"id\": \"storage_multiple_tables\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 213\n    },\n    {\n      \"id\": \"vector_ties_and_filter\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 106\n    },\n    {\n      \"id\": \"vector_float32\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 90\n    },\n    {\n      \"id\": \"vector_index_maintenance\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 181\n    },\n    {\n      \"id\": \"transaction_failed_insert\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 191\n    },\n    {\n      \"id\": \"transaction_autocommit_atomic\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 180\n    },\n    {\n      \"id\": \"transaction_shutdown_rollback\",\n      \"status\": \"PASS\",\n      \"message\": \"\",\n      \"duration_ms\": 181\n    }\n  ],\n  \"note\": \"Local diagnostic only; no performance/Agent scores or platform callbacks.\"\n}\n",
+      "artifact_sha256": "6a44cc321057fb24aa2fa18a616aa305af2d934b129f0520512d9ff296c3e331"
+    },
+    {
+      "id": "E6",
+      "source": "tool_result",
+      "date": "2026-11-15",
+      "status": "executed",
+      "context": "Final static binary, seven supplemental black-box regression tests.",
+      "artifact_path": "validation/regression.txt",
+      "output": "test_external_sort_and_equal_keys (__main__.EngineTests.test_external_sort_and_equal_keys) ... ok\ntest_index_extreme_floats_and_ties (__main__.EngineTests.test_index_extreme_floats_and_ties) ... ok\ntest_large_failed_statement_and_eviction (__main__.EngineTests.test_large_failed_statement_and_eviction) ... ok\ntest_lexer_and_unicode_order (__main__.EngineTests.test_lexer_and_unicode_order) ... ok\ntest_randomized_index_transactions_restarts (__main__.EngineTests.test_randomized_index_transactions_restarts) ... ok\ntest_transactional_schema_and_recovery_interruption (__main__.EngineTests.test_transactional_schema_and_recovery_interruption) ... ok\ntest_types_sql_and_statement_atomicity (__main__.EngineTests.test_types_sql_and_statement_atomicity) ... ok\n\n----------------------------------------------------------------------\nRan 7 tests in 3.090s\n\nOK\n",
+      "artifact_sha256": "2b7cd70fae0edbb6460efb4e2aad55ecb88ee0b8add854927e095677ca5fa766"
+    },
+    {
+      "id": "E7",
+      "source": "tool_result",
+      "date": "2026-11-15",
+      "status": "executed",
+      "context": "AddressSanitizer and UndefinedBehaviorSanitizer regression, seven tests.",
+      "artifact_path": "validation/sanitizers.txt",
+      "output": "test_external_sort_and_equal_keys (__main__.EngineTests.test_external_sort_and_equal_keys) ... ok\ntest_index_extreme_floats_and_ties (__main__.EngineTests.test_index_extreme_floats_and_ties) ... ok\ntest_large_failed_statement_and_eviction (__main__.EngineTests.test_large_failed_statement_and_eviction) ... ok\ntest_lexer_and_unicode_order (__main__.EngineTests.test_lexer_and_unicode_order) ... ok\ntest_randomized_index_transactions_restarts (__main__.EngineTests.test_randomized_index_transactions_restarts) ... ok\ntest_transactional_schema_and_recovery_interruption (__main__.EngineTests.test_transactional_schema_and_recovery_interruption) ... ok\ntest_types_sql_and_statement_atomicity (__main__.EngineTests.test_types_sql_and_statement_atomicity) ... ok\n\n----------------------------------------------------------------------\nRan 7 tests in 12.536s\n\nOK\n",
+      "artifact_sha256": "4ffd7980a7742410f364ded9b5522d30ca8844dc03a06d88d10987a046c76987"
+    },
+    {
+      "id": "E8",
+      "source": "tool_result",
+      "date": "2026-11-16",
+      "status": "passed",
+      "command": "MINIVECTORDB_BINARY=build/minivectordb-static python3 agent/run_learning_checks.py --output validation/learning-checks-20261116.json",
+      "implementation_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
+      "binary_sha256": "48eb72a2bf3093671143b9715a67de40f7970617717fd60a140014d93563d604",
+      "output_representation": "JSON serialization of the actual report subtree; no student text is generated by the test script.",
+      "summary": "全表 Top2 的 ID 是 [1,2]，后置过滤得到 []；先过滤的真实数据库查询返回 [3,4]，距离为 [1,2]。",
+      "output": "{\n  \"id\": \"filtered_topk\",\n  \"status\": \"passed\",\n  \"events\": [\n    {\n      \"sql\": \"CREATE TABLE t(id BIGINT PRIMARY KEY,g VARCHAR(8),v VECTOR(2));\",\n      \"response\": {\n        \"id\": 1,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"INSERT INTO t VALUES (1,'skip','[0,0]'),(2,'skip','[0.5,0]'),(3,'keep','[1,0]'),(4,'keep','[2,0]');\",\n      \"response\": {\n        \"affected_rows\": 4,\n        \"id\": 2,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"CREATE VECTOR INDEX idx ON t(v);\",\n      \"response\": {\n        \"id\": 3,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"SELECT id,g,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 2;\",\n      \"response\": {\n        \"id\": 4,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"g\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            1,\n            \"skip\",\n            0.0\n          ],\n          [\n            2,\n            \"skip\",\n            0.5\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t WHERE g='keep' ORDER BY d LIMIT 2;\",\n      \"response\": {\n        \"id\": 5,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            3,\n            1.0\n          ],\n          [\n            4,\n            2.0\n          ]\n        ]\n      }\n    }\n  ],\n  \"incorrect_order_simulation_ids\": [],\n  \"correct_filtered_ids\": [\n    3,\n    4\n  ],\n  \"summary\": \"全表 Top2 的 ID 是 [1,2]，后置过滤得到 []；先过滤的真实数据库查询返回 [3,4]，距离为 [1,2]。\"\n}"
+    },
+    {
+      "id": "E9",
+      "source": "tool_result",
+      "date": "2026-11-16",
+      "status": "passed",
+      "command": "MINIVECTORDB_BINARY=build/minivectordb-static python3 agent/run_learning_checks.py --output validation/learning-checks-20261116.json",
+      "implementation_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
+      "binary_sha256": "48eb72a2bf3093671143b9715a67de40f7970617717fd60a140014d93563d604",
+      "output_representation": "JSON serialization of the actual report subtree; no student text is generated by the test script.",
+      "summary": "3 轮均先收到 COMMIT 成功响应，再 SIGKILL；同目录重启后已提交行及向量距离完整。另一个未提交事务的插入、更新和删除在强杀重启后全部回滚。",
+      "output": "{\n  \"id\": \"acknowledged_commit_sigkill\",\n  \"status\": \"passed\",\n  \"rounds\": [\n    {\n      \"round\": 1,\n      \"commit_response\": {\n        \"id\": 5,\n        \"ok\": true\n      },\n      \"rows_after_restart\": [\n        [\n          1,\n          \"committed\"\n        ]\n      ],\n      \"vector_results_after_restart\": [\n        [\n          1,\n          5.0\n        ]\n      ]\n    },\n    {\n      \"round\": 2,\n      \"commit_response\": {\n        \"id\": 10,\n        \"ok\": true\n      },\n      \"rows_after_restart\": [\n        [\n          1,\n          \"committed\"\n        ],\n        [\n          2,\n          \"committed\"\n        ]\n      ],\n      \"vector_results_after_restart\": [\n        [\n          1,\n          5.0\n        ],\n        [\n          2,\n          10.0\n        ]\n      ]\n    },\n    {\n      \"round\": 3,\n      \"commit_response\": {\n        \"id\": 15,\n        \"ok\": true\n      },\n      \"rows_after_restart\": [\n        [\n          1,\n          \"committed\"\n        ],\n        [\n          2,\n          \"committed\"\n        ],\n        [\n          3,\n          \"committed\"\n        ]\n      ],\n      \"vector_results_after_restart\": [\n        [\n          1,\n          5.0\n        ],\n        [\n          2,\n          10.0\n        ],\n        [\n          3,\n          15.0\n        ]\n      ]\n    }\n  ],\n  \"uncommitted_rows_visible_before_kill\": [\n    [\n      1\n    ],\n    [\n      3\n    ],\n    [\n      99\n    ]\n  ],\n  \"final_rows\": [\n    [\n      1\n    ],\n    [\n      2\n    ],\n    [\n      3\n    ]\n  ],\n  \"final_vector_results\": [\n    [\n      1,\n      5.0\n    ],\n    [\n      2,\n      10.0\n    ],\n    [\n      3,\n      15.0\n    ]\n  ],\n  \"events\": [\n    {\n      \"sql\": \"CREATE TABLE t(id BIGINT PRIMARY KEY,tag VARCHAR(16),v VECTOR(2));\",\n      \"response\": {\n        \"id\": 1,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"CREATE VECTOR INDEX idx ON t(v);\",\n      \"response\": {\n        \"id\": 2,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"BEGIN;\",\n      \"response\": {\n        \"id\": 3,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"INSERT INTO t VALUES (1,'committed','[3,4]');\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 4,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"COMMIT;\",\n      \"response\": {\n        \"id\": 5,\n        \"ok\": true\n      }\n    },\n    {\n      \"action\": \"SIGKILL\",\n      \"exit_code\": -9,\n      \"reason\": \"COMMIT success response has already been received\"\n    },\n    {\n      \"action\": \"restart\",\n      \"handshake\": {\n        \"type\": \"ready\"\n      },\n      \"data_directory\": \"same temporary data directory\"\n    },\n    {\n      \"sql\": \"SELECT id,tag FROM t ORDER BY id;\",\n      \"response\": {\n        \"id\": 6,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"tag\"\n        ],\n        \"rows\": [\n          [\n            1,\n            \"committed\"\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;\",\n      \"response\": {\n        \"id\": 7,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            1,\n            5.0\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"BEGIN;\",\n      \"response\": {\n        \"id\": 8,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"INSERT INTO t VALUES (2,'committed','[6,8]');\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 9,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"COMMIT;\",\n      \"response\": {\n        \"id\": 10,\n        \"ok\": true\n      }\n    },\n    {\n      \"action\": \"SIGKILL\",\n      \"exit_code\": -9,\n      \"reason\": \"COMMIT success response has already been received\"\n    },\n    {\n      \"action\": \"restart\",\n      \"handshake\": {\n        \"type\": \"ready\"\n      },\n      \"data_directory\": \"same temporary data directory\"\n    },\n    {\n      \"sql\": \"SELECT id,tag FROM t ORDER BY id;\",\n      \"response\": {\n        \"id\": 11,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"tag\"\n        ],\n        \"rows\": [\n          [\n            1,\n            \"committed\"\n          ],\n          [\n            2,\n            \"committed\"\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;\",\n      \"response\": {\n        \"id\": 12,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            1,\n            5.0\n          ],\n          [\n            2,\n            10.0\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"BEGIN;\",\n      \"response\": {\n        \"id\": 13,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"INSERT INTO t VALUES (3,'committed','[9,12]');\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 14,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"COMMIT;\",\n      \"response\": {\n        \"id\": 15,\n        \"ok\": true\n      }\n    },\n    {\n      \"action\": \"SIGKILL\",\n      \"exit_code\": -9,\n      \"reason\": \"COMMIT success response has already been received\"\n    },\n    {\n      \"action\": \"restart\",\n      \"handshake\": {\n        \"type\": \"ready\"\n      },\n      \"data_directory\": \"same temporary data directory\"\n    },\n    {\n      \"sql\": \"SELECT id,tag FROM t ORDER BY id;\",\n      \"response\": {\n        \"id\": 16,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"tag\"\n        ],\n        \"rows\": [\n          [\n            1,\n            \"committed\"\n          ],\n          [\n            2,\n            \"committed\"\n          ],\n          [\n            3,\n            \"committed\"\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;\",\n      \"response\": {\n        \"id\": 17,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            1,\n            5.0\n          ],\n          [\n            2,\n            10.0\n          ],\n          [\n            3,\n            15.0\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"BEGIN;\",\n      \"response\": {\n        \"id\": 18,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"INSERT INTO t VALUES (99,'uncommitted','[0,0]');\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 19,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"UPDATE t SET v='[99,99]' WHERE id=1;\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 20,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"DELETE FROM t WHERE id=2;\",\n      \"response\": {\n        \"affected_rows\": 1,\n        \"id\": 21,\n        \"ok\": true\n      }\n    },\n    {\n      \"sql\": \"SELECT id FROM t ORDER BY id;\",\n      \"response\": {\n        \"id\": 22,\n        \"ok\": true,\n        \"columns\": [\n          \"id\"\n        ],\n        \"rows\": [\n          [\n            1\n          ],\n          [\n            3\n          ],\n          [\n            99\n          ]\n        ]\n      }\n    },\n    {\n      \"action\": \"SIGKILL\",\n      \"exit_code\": -9,\n      \"reason\": \"no COMMIT request for the pending transaction\"\n    },\n    {\n      \"action\": \"restart\",\n      \"handshake\": {\n        \"type\": \"ready\"\n      },\n      \"data_directory\": \"same temporary data directory\"\n    },\n    {\n      \"sql\": \"SELECT id FROM t ORDER BY id;\",\n      \"response\": {\n        \"id\": 23,\n        \"ok\": true,\n        \"columns\": [\n          \"id\"\n        ],\n        \"rows\": [\n          [\n            1\n          ],\n          [\n            2\n          ],\n          [\n            3\n          ]\n        ]\n      }\n    },\n    {\n      \"sql\": \"SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;\",\n      \"response\": {\n        \"id\": 24,\n        \"ok\": true,\n        \"columns\": [\n          \"id\",\n          \"d\"\n        ],\n        \"rows\": [\n          [\n            1,\n            5.0\n          ],\n          [\n            2,\n            10.0\n          ],\n          [\n            3,\n            15.0\n          ]\n        ]\n      }\n    }\n  ],\n  \"summary\": \"3 轮均先收到 COMMIT 成功响应，再 SIGKILL；同目录重启后已提交行及向量距离完整。另一个未提交事务的插入、更新和删除在强杀重启后全部回滚。\"\n}"
+    },
+    {
+      "id": "E10",
+      "source": "tool_result",
+      "date": "2026-11-16",
+      "status": "process_scope_verified",
+      "command": "MINIVECTORDB_BINARY=build/minivectordb-static python3 agent/run_learning_checks.py --output validation/learning-checks-20261116.json",
+      "implementation_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
+      "binary_sha256": "48eb72a2bf3093671143b9715a67de40f7970617717fd60a140014d93563d604",
+      "output_representation": "JSON serialization of the actual report subtree; no student text is generated by the test script.",
+      "summary": "读取 /proc 确认 96 MiB 限制作用于 Max address space；VmSize、VmRSS、VmHWM 是不同指标。此记录没有测量 Docker 容器 memory.peak，不能据此声称容器内存小于 96 MiB。",
+      "output": "{\n  \"id\": \"memory_measurement_scope\",\n  \"status\": \"process_scope_verified\",\n  \"limits_line\": \"Max address space         100663296            100663296            bytes     \",\n  \"process_metrics\": [\n    \"VmSize:\\t    2600 kB\",\n    \"VmHWM:\\t    1468 kB\",\n    \"VmRSS:\\t    1468 kB\"\n  ],\n  \"docker_cli_available\": false,\n  \"local_cgroup_v2_available\": false,\n  \"docker_container_measurement\": \"not_executed\",\n  \"summary\": \"读取 /proc 确认 96 MiB 限制作用于 Max address space；VmSize、VmRSS、VmHWM 是不同指标。此记录没有测量 Docker 容器 memory.peak，不能据此声称容器内存小于 96 MiB。\"\n}"
     }
   ],
   "retrospective": [
@@ -112,10 +216,128 @@
     }
   ],
   "limitations": [
-    "No prior student dialogue or student-authored technical explanation was provided. Do not attribute assistant design decisions or tool execution to the student.",
-    "Selected excerpts omit repetitive tool calls. No fabricated human questions, experiment failures, scores or learning claims have been added.",
-    "Docker CLI is unavailable in this environment. Actual image build and container protocol checks remain for the user's Docker machine or platform precheck.",
-    "The user explicitly requested no platform submission and will push manually. No formal evaluation was triggered.",
-    "Hidden test results, formal cgroup metrics, Agent scoring and leaderboard rank are unknown."
-  ]
+    "At the end of 2026-11-15 the available user prompts only requested implementation and manual pushing; no student technical explanations were present then. The 2026-11-16 guided answers are new, actually supplied user contributions.",
+    "Selected excerpts omit repetitive tool calls. No fabricated questions, experiments, user learning claims or official scores are included.",
+    "SU1 answers were elicited by AQ1. The assistant designed the concrete four-row TopK counterexample and extended the user-proposed crash check to an uncommitted transaction. These assistant additions are not attributed to the student.",
+    "The Max address space inspection and earlier larger-than-address-space workload are process-level checks. Docker/cgroup v2 memory.peak verification remains unexecuted in the current environment.",
+    "The optional retrospective AQ2 is awaiting a user response at the time of this material revision. No post-experiment student explanation is invented.",
+    "L1-L3 are an organizational index with no assigned scores. Their student excerpts and result excerpts are separate, non-reused spans. No claim is made that all five grading dimensions are covered.",
+    "The user will push manually. No platform precheck or formal submission has been triggered by the assistant."
+  ],
+  "updated_date": "2026-11-16",
+  "evaluation_context": {
+    "question_id": 600081,
+    "subquestion_id": 800518,
+    "rules_version": "agent-learning-evidence-v3-unbounded",
+    "rules_url": "https://oceanbase.yuque.com/org-wiki-obtech-vh7w9r/hc3pio/lg8enxlmwg69unt6",
+    "material_path": "agent/conversation.json",
+    "submission_branch": "2026-competition-round2",
+    "repository_url": "https://github.com/json888666-afk/seekdb.git",
+    "submission_policy": "The user will push manually. Performance and Agent evaluation use one locked commit.",
+    "format": "UTF-8 JSON object, at most 128 KiB, no duplicate keys or non-finite numbers.",
+    "interpretation": "Actual student contribution and actual results are separate evidence. Assistant explanations and logs alone do not establish student understanding. Units are not duplicated across dimensions."
+  },
+  "evidence_units": [
+    {
+      "id": "L1",
+      "topic": "过滤与 TopK 的执行顺序",
+      "dimension_hint": "技术理解与迁移",
+      "organization_only_not_a_score": true,
+      "student_evidence": [
+        {
+          "pointer": "/conversations/6/content",
+          "quote": "因为 TopK 可能被不符合条件的数据占据，后续过滤会导致符合条件的结果被提前排除"
+        }
+      ],
+      "result_evidence": [
+        {
+          "pointer": "/experiments/7/summary",
+          "quote": "全表 Top2 的 ID 是 [1,2]，后置过滤得到 []；先过滤的真实数据库查询返回 [3,4]，距离为 [1,2]。"
+        }
+      ],
+      "context": "A guided student response followed by an actual assistant-run verification. The official evaluator decides whether and how this evidence qualifies. No claim of an autonomous student experiment or an official score."
+    },
+    {
+      "id": "L2",
+      "topic": "已确认提交的进程强杀恢复",
+      "dimension_hint": "独立验证与质疑",
+      "organization_only_not_a_score": true,
+      "student_evidence": [
+        {
+          "pointer": "/conversations/6/content",
+          "quote": "确认 COMMIT 成功返回，再立即使用 kill -9 强制终止数据库进程。随后重启数据库，查询刚才提交的数据是否完整。"
+        }
+      ],
+      "result_evidence": [
+        {
+          "pointer": "/experiments/8/summary",
+          "quote": "3 轮均先收到 COMMIT 成功响应，再 SIGKILL；同目录重启后已提交行及向量距离完整。另一个未提交事务的插入、更新和删除在强杀重启后全部回滚。"
+        }
+      ],
+      "context": "A guided student response followed by an actual assistant-run verification. The official evaluator decides whether and how this evidence qualifies. No claim of an autonomous student experiment or an official score."
+    },
+    {
+      "id": "L3",
+      "topic": "进程地址空间限制与容器总内存口径",
+      "dimension_hint": "取舍与反思",
+      "organization_only_not_a_score": true,
+      "student_evidence": [
+        {
+          "pointer": "/conversations/6/content",
+          "quote": "因此需要通过 Docker 的 cgroup 内存统计进一步验证整个容器是否满足 96 MiB 限制。"
+        }
+      ],
+      "result_evidence": [
+        {
+          "pointer": "/experiments/9/summary",
+          "quote": "读取 /proc 确认 96 MiB 限制作用于 Max address space；VmSize、VmRSS、VmHWM 是不同指标。此记录没有测量 Docker 容器 memory.peak，不能据此声称容器内存小于 96 MiB。"
+        }
+      ],
+      "context": "A guided student response followed by an actual assistant-run verification. The official evaluator decides whether and how this evidence qualifies. No claim of an autonomous student experiment or an official score."
+    }
+  ],
+  "code_state": {
+    "reference_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
+    "description": "Database implementation is unchanged; this revision adds learning material and local validation tools.",
+    "files": [
+      {
+        "path": "src/main.cpp",
+        "sha256": "65e231d7272ae79e9f44a0d7acbe7e24869741488a9660bc3ed762c6cc4abc8f"
+      },
+      {
+        "path": "src/sql.hpp",
+        "sha256": "583ca8e56719dd711bd16185f7ece4db620b18b86e342ed9aaea6b95d40180b5"
+      },
+      {
+        "path": "src/storage.hpp",
+        "sha256": "0a14008f66a0f5197304b94f74c8a9cee212c3b4311d925841c04685d3579d56"
+      },
+      {
+        "path": "src/vector_index.hpp",
+        "sha256": "24d3abdff3a5ec7063a889c675447f64e9fefc676a9d15faa59b41f716242254"
+      },
+      {
+        "path": "src/engine.hpp",
+        "sha256": "42ff64169f6285a4ee80d980f5653ec8a29d0c1dfbc08f49d92c5b86a1b34ae8"
+      },
+      {
+        "path": "Dockerfile",
+        "sha256": "d179ef5ae7952d55033d186269e165ebf8dcc6337b9beaad69a2f08af897d434"
+      },
+      {
+        "path": "third_party/json.hpp",
+        "sha256": "9bea4c8066ef4a1c206b2be5a36302f8926f7fdc6087af5d20b417d0cf103ea6"
+      }
+    ],
+    "hash_normalization": "SHA-256 of file bytes with CRLF normalized to LF"
+  },
+  "verification_limits": {
+    "container_memory": "not_executed",
+    "observed_local_docker_cli": false,
+    "observed_local_cgroup_v2": false,
+    "formal_mysql_cases": "not_executed",
+    "formal_agent_review": "not_executed",
+    "formal_score": null,
+    "formal_rank": null
+  }
 }

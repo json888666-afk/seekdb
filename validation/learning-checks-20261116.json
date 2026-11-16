@@ -1,0 +1,581 @@
+{
+  "session_date": "2026-11-16",
+  "timezone": "Asia/Shanghai",
+  "source": "actual_local_tool_execution",
+  "synthetic_student_dialogue": false,
+  "implementation_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
+  "binary_sha256": "48eb72a2bf3093671143b9715a67de40f7970617717fd60a140014d93563d604",
+  "checks": [
+    {
+      "id": "filtered_topk",
+      "status": "passed",
+      "events": [
+        {
+          "sql": "CREATE TABLE t(id BIGINT PRIMARY KEY,g VARCHAR(8),v VECTOR(2));",
+          "response": {
+            "id": 1,
+            "ok": true
+          }
+        },
+        {
+          "sql": "INSERT INTO t VALUES (1,'skip','[0,0]'),(2,'skip','[0.5,0]'),(3,'keep','[1,0]'),(4,'keep','[2,0]');",
+          "response": {
+            "affected_rows": 4,
+            "id": 2,
+            "ok": true
+          }
+        },
+        {
+          "sql": "CREATE VECTOR INDEX idx ON t(v);",
+          "response": {
+            "id": 3,
+            "ok": true
+          }
+        },
+        {
+          "sql": "SELECT id,g,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 2;",
+          "response": {
+            "id": 4,
+            "ok": true,
+            "columns": [
+              "id",
+              "g",
+              "d"
+            ],
+            "rows": [
+              [
+                1,
+                "skip",
+                0.0
+              ],
+              [
+                2,
+                "skip",
+                0.5
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t WHERE g='keep' ORDER BY d LIMIT 2;",
+          "response": {
+            "id": 5,
+            "ok": true,
+            "columns": [
+              "id",
+              "d"
+            ],
+            "rows": [
+              [
+                3,
+                1.0
+              ],
+              [
+                4,
+                2.0
+              ]
+            ]
+          }
+        }
+      ],
+      "incorrect_order_simulation_ids": [],
+      "correct_filtered_ids": [
+        3,
+        4
+      ],
+      "summary": "全表 Top2 的 ID 是 [1,2]，后置过滤得到 []；先过滤的真实数据库查询返回 [3,4]，距离为 [1,2]。"
+    },
+    {
+      "id": "acknowledged_commit_sigkill",
+      "status": "passed",
+      "rounds": [
+        {
+          "round": 1,
+          "commit_response": {
+            "id": 5,
+            "ok": true
+          },
+          "rows_after_restart": [
+            [
+              1,
+              "committed"
+            ]
+          ],
+          "vector_results_after_restart": [
+            [
+              1,
+              5.0
+            ]
+          ]
+        },
+        {
+          "round": 2,
+          "commit_response": {
+            "id": 10,
+            "ok": true
+          },
+          "rows_after_restart": [
+            [
+              1,
+              "committed"
+            ],
+            [
+              2,
+              "committed"
+            ]
+          ],
+          "vector_results_after_restart": [
+            [
+              1,
+              5.0
+            ],
+            [
+              2,
+              10.0
+            ]
+          ]
+        },
+        {
+          "round": 3,
+          "commit_response": {
+            "id": 15,
+            "ok": true
+          },
+          "rows_after_restart": [
+            [
+              1,
+              "committed"
+            ],
+            [
+              2,
+              "committed"
+            ],
+            [
+              3,
+              "committed"
+            ]
+          ],
+          "vector_results_after_restart": [
+            [
+              1,
+              5.0
+            ],
+            [
+              2,
+              10.0
+            ],
+            [
+              3,
+              15.0
+            ]
+          ]
+        }
+      ],
+      "uncommitted_rows_visible_before_kill": [
+        [
+          1
+        ],
+        [
+          3
+        ],
+        [
+          99
+        ]
+      ],
+      "final_rows": [
+        [
+          1
+        ],
+        [
+          2
+        ],
+        [
+          3
+        ]
+      ],
+      "final_vector_results": [
+        [
+          1,
+          5.0
+        ],
+        [
+          2,
+          10.0
+        ],
+        [
+          3,
+          15.0
+        ]
+      ],
+      "events": [
+        {
+          "sql": "CREATE TABLE t(id BIGINT PRIMARY KEY,tag VARCHAR(16),v VECTOR(2));",
+          "response": {
+            "id": 1,
+            "ok": true
+          }
+        },
+        {
+          "sql": "CREATE VECTOR INDEX idx ON t(v);",
+          "response": {
+            "id": 2,
+            "ok": true
+          }
+        },
+        {
+          "sql": "BEGIN;",
+          "response": {
+            "id": 3,
+            "ok": true
+          }
+        },
+        {
+          "sql": "INSERT INTO t VALUES (1,'committed','[3,4]');",
+          "response": {
+            "affected_rows": 1,
+            "id": 4,
+            "ok": true
+          }
+        },
+        {
+          "sql": "COMMIT;",
+          "response": {
+            "id": 5,
+            "ok": true
+          }
+        },
+        {
+          "action": "SIGKILL",
+          "exit_code": -9,
+          "reason": "COMMIT success response has already been received"
+        },
+        {
+          "action": "restart",
+          "handshake": {
+            "type": "ready"
+          },
+          "data_directory": "same temporary data directory"
+        },
+        {
+          "sql": "SELECT id,tag FROM t ORDER BY id;",
+          "response": {
+            "id": 6,
+            "ok": true,
+            "columns": [
+              "id",
+              "tag"
+            ],
+            "rows": [
+              [
+                1,
+                "committed"
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;",
+          "response": {
+            "id": 7,
+            "ok": true,
+            "columns": [
+              "id",
+              "d"
+            ],
+            "rows": [
+              [
+                1,
+                5.0
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "BEGIN;",
+          "response": {
+            "id": 8,
+            "ok": true
+          }
+        },
+        {
+          "sql": "INSERT INTO t VALUES (2,'committed','[6,8]');",
+          "response": {
+            "affected_rows": 1,
+            "id": 9,
+            "ok": true
+          }
+        },
+        {
+          "sql": "COMMIT;",
+          "response": {
+            "id": 10,
+            "ok": true
+          }
+        },
+        {
+          "action": "SIGKILL",
+          "exit_code": -9,
+          "reason": "COMMIT success response has already been received"
+        },
+        {
+          "action": "restart",
+          "handshake": {
+            "type": "ready"
+          },
+          "data_directory": "same temporary data directory"
+        },
+        {
+          "sql": "SELECT id,tag FROM t ORDER BY id;",
+          "response": {
+            "id": 11,
+            "ok": true,
+            "columns": [
+              "id",
+              "tag"
+            ],
+            "rows": [
+              [
+                1,
+                "committed"
+              ],
+              [
+                2,
+                "committed"
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;",
+          "response": {
+            "id": 12,
+            "ok": true,
+            "columns": [
+              "id",
+              "d"
+            ],
+            "rows": [
+              [
+                1,
+                5.0
+              ],
+              [
+                2,
+                10.0
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "BEGIN;",
+          "response": {
+            "id": 13,
+            "ok": true
+          }
+        },
+        {
+          "sql": "INSERT INTO t VALUES (3,'committed','[9,12]');",
+          "response": {
+            "affected_rows": 1,
+            "id": 14,
+            "ok": true
+          }
+        },
+        {
+          "sql": "COMMIT;",
+          "response": {
+            "id": 15,
+            "ok": true
+          }
+        },
+        {
+          "action": "SIGKILL",
+          "exit_code": -9,
+          "reason": "COMMIT success response has already been received"
+        },
+        {
+          "action": "restart",
+          "handshake": {
+            "type": "ready"
+          },
+          "data_directory": "same temporary data directory"
+        },
+        {
+          "sql": "SELECT id,tag FROM t ORDER BY id;",
+          "response": {
+            "id": 16,
+            "ok": true,
+            "columns": [
+              "id",
+              "tag"
+            ],
+            "rows": [
+              [
+                1,
+                "committed"
+              ],
+              [
+                2,
+                "committed"
+              ],
+              [
+                3,
+                "committed"
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;",
+          "response": {
+            "id": 17,
+            "ok": true,
+            "columns": [
+              "id",
+              "d"
+            ],
+            "rows": [
+              [
+                1,
+                5.0
+              ],
+              [
+                2,
+                10.0
+              ],
+              [
+                3,
+                15.0
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "BEGIN;",
+          "response": {
+            "id": 18,
+            "ok": true
+          }
+        },
+        {
+          "sql": "INSERT INTO t VALUES (99,'uncommitted','[0,0]');",
+          "response": {
+            "affected_rows": 1,
+            "id": 19,
+            "ok": true
+          }
+        },
+        {
+          "sql": "UPDATE t SET v='[99,99]' WHERE id=1;",
+          "response": {
+            "affected_rows": 1,
+            "id": 20,
+            "ok": true
+          }
+        },
+        {
+          "sql": "DELETE FROM t WHERE id=2;",
+          "response": {
+            "affected_rows": 1,
+            "id": 21,
+            "ok": true
+          }
+        },
+        {
+          "sql": "SELECT id FROM t ORDER BY id;",
+          "response": {
+            "id": 22,
+            "ok": true,
+            "columns": [
+              "id"
+            ],
+            "rows": [
+              [
+                1
+              ],
+              [
+                3
+              ],
+              [
+                99
+              ]
+            ]
+          }
+        },
+        {
+          "action": "SIGKILL",
+          "exit_code": -9,
+          "reason": "no COMMIT request for the pending transaction"
+        },
+        {
+          "action": "restart",
+          "handshake": {
+            "type": "ready"
+          },
+          "data_directory": "same temporary data directory"
+        },
+        {
+          "sql": "SELECT id FROM t ORDER BY id;",
+          "response": {
+            "id": 23,
+            "ok": true,
+            "columns": [
+              "id"
+            ],
+            "rows": [
+              [
+                1
+              ],
+              [
+                2
+              ],
+              [
+                3
+              ]
+            ]
+          }
+        },
+        {
+          "sql": "SELECT id,L2_DISTANCE(v,'[0,0]') AS d FROM t ORDER BY d LIMIT 10;",
+          "response": {
+            "id": 24,
+            "ok": true,
+            "columns": [
+              "id",
+              "d"
+            ],
+            "rows": [
+              [
+                1,
+                5.0
+              ],
+              [
+                2,
+                10.0
+              ],
+              [
+                3,
+                15.0
+              ]
+            ]
+          }
+        }
+      ],
+      "summary": "3 轮均先收到 COMMIT 成功响应，再 SIGKILL；同目录重启后已提交行及向量距离完整。另一个未提交事务的插入、更新和删除在强杀重启后全部回滚。"
+    },
+    {
+      "id": "memory_measurement_scope",
+      "status": "process_scope_verified",
+      "limits_line": "Max address space         100663296            100663296            bytes     ",
+      "process_metrics": [
+        "VmSize:\t    2600 kB",
+        "VmHWM:\t    1468 kB",
+        "VmRSS:\t    1468 kB"
+      ],
+      "docker_cli_available": false,
+      "local_cgroup_v2_available": false,
+      "docker_container_measurement": "not_executed",
+      "summary": "读取 /proc 确认 96 MiB 限制作用于 Max address space；VmSize、VmRSS、VmHWM 是不同指标。此记录没有测量 Docker 容器 memory.peak，不能据此声称容器内存小于 96 MiB。"
+    }
+  ]
+}

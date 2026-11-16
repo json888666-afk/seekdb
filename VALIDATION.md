@@ -27,7 +27,7 @@
 - 未访问正式隐藏输入、未触发平台预检或正式提测、未获得正式性能分或 Agent 分。
 - 本地时间、进程 RSS、文件大小不能代替正式 cgroup T/B/M 或比赛排名。
 - 存储采用追加分配，没有历史版本压缩；频繁小事务可能造成磁盘空间放大。
-- 真实用户只提出任务和手动推送要求，Agent 材料没有虚构用户提出设计、学习结论或实验。
+- 截至首版，真实用户只提出任务和手动推送要求；2026-11-16 的新增用户技术回答和验证另见下节。两阶段来源在材料中明确区分。
 
 ## 复现
 
@@ -44,3 +44,15 @@ MINIVECTORDB_BINARY="$PWD/build/minivectordb-asan" python3 tests/test_engine.py
 ```
 
 所有测试数据目录由测试程序独立创建并回收；每次官方驱动报告目录必须使用新路径。源码和依赖已交付，无需联网下载编译依赖。
+
+## 2026-11-16：Agent Prompt 材料补充
+
+用户在实验前实际解释了过滤与 TopK 的关系，提出“确认 COMMIT 成功后强杀、同目录重启并重复检查”的测试方案，并指出进程内存与容器统计的边界。原文及提问上下文保存在 `agent/conversation.json`。
+
+按该过程运行 `agent/run_learning_checks.py`，实际结果保存于 `validation/learning-checks-20261116.json`，同时内嵌进材料 JSON：
+
+- 过滤反例：全表 Top2 为 ID `[1,2]`，两条均不满足过滤条件，后置过滤为空；真实过滤查询返回 `[3,4]`，距离 `[1,2]`。
+- 3 轮均先收到 COMMIT 成功响应，再 SIGKILL；同目录重启后普通行、向量距离完整保留。额外未提交事务在强杀前可见其插入、更新、删除，重启后这些修改全部回滚。
+- `/proc/<pid>/limits` 明确显示 `Max address space` 为 100,663,296 字节，等于 96 MiB；同时记录 VmSize、VmRSS、VmHWM。该检查没有测量 Docker 容器 memory.peak；当前环境未发现 Docker CLI 和本地 cgroup v2 入口。
+
+新增 `agent/check_material.py` 检查材料格式、大小、严格 JSON、证据引用和来源。它不计算正式分数，不判断真人学习效果；检查结果在 `validation/material-check.json`。数据库实现和 Dockerfile 与 `b7be60a484387e27ea79dd29e8ab8f09d3877996` 保持一致，源码指纹随材料交付。

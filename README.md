@@ -89,7 +89,7 @@ make check
 python3 tests/test_engine.py --large-memory
 ```
 
-详细执行证据、环境及未验证项见 [VALIDATION.md](VALIDATION.md)。公开样例通过不代表隐藏用例或正式评分已通过。Agent 材料位于 `agent/conversation.json`，仅记录真实用户输入、Agent 操作和实际工具结果，不虚构用户学习或实验。
+详细执行证据、环境及未验证项见 [VALIDATION.md](VALIDATION.md)。公开样例通过不代表隐藏用例或正式评分已通过。Agent 材料位于 `agent/conversation.json`，仅记录真实用户输入、Agent 操作和实际工具结果，不虚构用户学习或实验。2026-11-16 已补充用户实际技术回答及针对性验证，材料维护和检查方法见 [agent/README.md](agent/README.md)。可运行 `python agent/check_material.py` 检查格式与证据引用。
 
 ## 手动推送和提测
 

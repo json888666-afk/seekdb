@@ -1,0 +1,62 @@
+{
+  "scope": "synthetic_validator_fixtures_only_not_student_learning_evidence",
+  "passed": true,
+  "negative_cases": [
+    {
+      "case": "duplicate_keys",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "nan",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "infinity",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "exponent_overflow",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "wrong_top_level",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "over_128_kib",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "nonmatching_quote",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "unresolved_pointer",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "assistant_text_as_student",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "reused_evidence_span",
+      "expected_rejection": true,
+      "passed": true
+    },
+    {
+      "case": "source_hash_mismatch",
+      "expected_rejection": true,
+      "passed": true
+    }
+  ],
+  "positive_material_check": true
+}
