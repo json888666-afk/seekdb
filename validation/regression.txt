@@ -21,3 +21,12 @@ constrained protocol (2 cpu / 2 GiB / 128 pid / non-root / no-new-privs): 20/20 
 constrained benchmark: write 1.196487 s, index 0.018277 s, query 1.333650 s, VmHWM 8192 kB, passed=true
 constrained lifecycle: cold start VmHWM 1024 kB; SIGKILL recovery kept 3 committed rows; data-dir-only writes; 150k x 256 VmHWM 19812 kB
 static build with Dockerfile flags: 2714352 bytes, statically linked, "not a dynamic executable"
+
+=== 2026-11-17 round-3 optimization re-verification (WSL2 Ubuntu 24.04, i7-1165G7, gcc 13.3) ===
+make: no warnings
+protocol_check public cases: 20/20 PASS (passed=true)
+tests/test_engine.py: Ran 7 tests ... OK
+tests/benchmark.py baseline a049eccc: write 3.967158 s, index 0.044331 s, query 2.584204 s, VmHWM 11164 kB, passed=true
+tests/benchmark.py round-3 src (ext4): write 1.960683 s, index 0.028762 s, query 0.852052 s, VmHWM 11168 kB, passed=true
+tests/benchmark.py round-3 src (tmpfs): write 1.442535 s, index 0.014500 s, query 0.876963 s, VmHWM 11136 kB, passed=true
+tests/test_engine.py --large-memory: exit 0 (150000x256, 96 MiB address space, 4 MiB page cache)

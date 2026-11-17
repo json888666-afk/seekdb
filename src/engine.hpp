@@ -7,6 +7,7 @@
 #include <optional>
 #include <queue>
 #include <set>
+#include <string_view>
 
 namespace mini {
 struct Expr {
@@ -66,6 +67,65 @@ struct Filter {
                 return false;
         }
         return !empty;
+    }
+};
+// 向量索引叶子里直接按编码后的行字节判断 WHERE 条件，只有命中的行才计算
+// 距离、解码整行；带 g='gX' 这类等值过滤的查询因此不再对全表算距离。
+struct RawFilter {
+    const Table *table;
+    const std::vector<Condition> *conditions;
+    bool operator()(const char *body, size_t size) const {
+        const char *end = body + size;
+        for (const auto &c : *conditions) {
+            const char *p = body;
+            for (int i = 0; i < c.column; ++i) {
+                const Column &col = table->columns[i];
+                if (col.type == "bigint")
+                    p += sizeof(int64_t);
+                else if (col.type == "varchar") {
+                    if (size_t(end - p) < sizeof(uint32_t))
+                        return false;
+                    uint32_t n;
+                    std::memcpy(&n, p, sizeof(n));
+                    p += sizeof(n) + n;
+                } else
+                    p += size_t(col.size) * sizeof(float);
+            }
+            if (p > end)
+                return false;
+            bool ok = false;
+            if (table->columns[c.column].type == "bigint") {
+                if (size_t(end - p) < sizeof(int64_t))
+                    return false;
+                int64_t v;
+                std::memcpy(&v, p, sizeof(v));
+                int64_t w = std::get<int64_t>(c.value);
+                ok = c.op == "="    ? v == w
+                     : c.op == "<"  ? v < w
+                     : c.op == "<=" ? v <= w
+                     : c.op == ">"  ? v > w
+                     : c.op == ">=" ? v >= w
+                                    : false;
+            } else {
+                if (size_t(end - p) < sizeof(uint32_t))
+                    return false;
+                uint32_t n;
+                std::memcpy(&n, p, sizeof(n));
+                if (size_t(end - p) < sizeof(n) + n)
+                    return false;
+                std::string_view v(p + sizeof(n), n);
+                int cmp = v.compare(std::get<std::string>(c.value));
+                ok = c.op == "="    ? cmp == 0
+                     : c.op == "<"  ? cmp < 0
+                     : c.op == "<=" ? cmp <= 0
+                     : c.op == ">"  ? cmp > 0
+                     : c.op == ">=" ? cmp >= 0
+                                    : false;
+            }
+            if (!ok)
+                return false;
+        }
+        return true;
     }
 };
 inline void parse_where_atom(Parser &p, const Table &t, Filter &f) {
@@ -575,8 +635,15 @@ class Engine {
                         return heap.size() < limit ? INFINITY
                                                    : std::get<double>(heap.top().keys[0]);
                     };
-                    VectorIndex(store, t).search(orders[0].expr.query, f.lo, f.hi, threshold,
-                                                 consider);
+                    if (f.conditions.empty()) {
+                        auto any = [](const char *, size_t) { return true; };
+                        VectorIndex(store, t).search(orders[0].expr.query, f.lo, f.hi, threshold,
+                                                     consider, any);
+                    } else {
+                        RawFilter raw{&t, &f.conditions};
+                        VectorIndex(store, t).search(orders[0].expr.query, f.lo, f.hi, threshold,
+                                                     consider, raw);
+                    }
                 } else
                     store.scan(t.root, f.lo, f.hi, [&](int64_t key, uint64_t off) {
                         auto row = store.read_row(t, off);

@@ -65,9 +65,9 @@ class VectorIndex {
         // Outward slack preserves exactness at floating point boundaries.
         return std::max(0.0, distance - ref.radius - 1e-12 * (distance + ref.radius + 1));
     }
-    template <class Threshold, class Emit>
-    void visit(uint64_t off, const std::vector<float> &query, int64_t lo, int64_t hi,
-               Threshold &threshold, Emit &emit) {
+    template <class Threshold, class Emit, class Prefilter>
+    void visit(uint64_t off, const std::vector<float> &query, const std::vector<double> &query_d,
+               int64_t lo, int64_t hi, Threshold &threshold, Emit &emit, Prefilter &prefilter) {
         auto data = store.read_blob_cached(off);
         const char *p = data->data();
         const char *e = p + data->size();
@@ -84,11 +84,15 @@ class VectorIndex {
                 if (size_t(e - p) < size)
                     throw std::runtime_error("corrupt vector block");
                 if (key >= lo && key <= hi &&
-                    (!table.delta_root || !store.find(table.delta_root, key))) {
-                    // 精确剪枝：distance 超过当前第 K 名就不必构造整行 Value。
+                    (!table.delta_root || !store.find(table.delta_root, key)) &&
+                    prefilter(p, size)) {
+                    // 精确剪枝：平方距离超过当前第 K 名的平方就跳过整行解码；
+                    // 平方比较省掉每行一次 sqrt，略放宽边界以吸收 SIMD 归约误差。
+                    double t = threshold();
+                    double limit = t * t * (1.0 + 1e-12) + 1e-12;
                     const char *vector = reinterpret_cast<const char *>(
                         Store::row_vector(table, p));
-                    if (l2(vector, query, dim) <= threshold()) {
+                    if (squared_l2(vector, query_d.data(), dim) <= limit) {
                         auto row = Store::decode_row(table, p, p + size);
                         emit(key, rowoff, row);
                     }
@@ -107,7 +111,7 @@ class VectorIndex {
                       [](auto &a, auto &b) { return a.first < b.first; });
             for (auto &[lower, child] : children)
                 if (lower <= threshold())
-                    visit(child.off, query, lo, hi, threshold, emit);
+                    visit(child.off, query, query_d, lo, hi, threshold, emit, prefilter);
         }
     }
 
@@ -173,11 +177,13 @@ class VectorIndex {
         }
         return 0;
     }
-    template <class Threshold, class Emit>
+    template <class Threshold, class Emit, class Prefilter>
     void search(const std::vector<float> &query, int64_t lo, int64_t hi, Threshold threshold,
-                Emit emit) {
+                Emit emit, Prefilter prefilter) {
+        // 查询向量转 double 一次，热点循环里就不用每个分量重复转换。
+        const std::vector<double> query_d(query.begin(), query.end());
         if (table.vector_root)
-            visit(table.vector_root, query, lo, hi, threshold, emit);
+            visit(table.vector_root, query, query_d, lo, hi, threshold, emit, prefilter);
         if (table.delta_root)
             store.scan(table.delta_root, lo, hi, [&](int64_t key, uint64_t off) {
                 if (off != 1) {

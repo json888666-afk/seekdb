@@ -10,9 +10,19 @@
   "oracle_checked_queries": 1000,
   "database_bytes": 12093396,
   "passed": true,
-  "note": "Local wall time on the verification host; includes Python request construction. Not official T/B/M or score.",
-  "write_seconds": 1.227573,
-  "index_seconds": 0.018704,
-  "query_seconds": 1.290202,
-  "process_peak_rss": "VmHWM:\t   10240 kB"
+  "note": "Local wall time on the WSL2 verification host (i7-1165G7, 8 threads, AVX2/AVX-512F); includes Python request construction. Not official T/B/M or score.",
+  "baseline": {
+    "revision": "a049eccc0150e6a0cd343448a54d64cb622a670c",
+    "write_seconds": 3.967158,
+    "index_seconds": 0.044331,
+    "query_seconds": 2.584204,
+    "process_peak_rss": "VmHWM:\t   11164 kB"
+  },
+  "optimized": {
+    "write_seconds_tmpfs": 1.442535,
+    "write_seconds_ext4": 1.960683,
+    "index_seconds": 0.0145,
+    "query_seconds": 0.852052,
+    "process_peak_rss": "VmHWM:\t   11136 kB"
+  }
 }

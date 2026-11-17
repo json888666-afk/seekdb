@@ -3,7 +3,11 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <charconv>
 #include <cstring>
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
 #include <limits>
 #include <stdexcept>
 #include <string>
@@ -206,24 +210,87 @@ class Parser {
         expect("]");
         return text + "]";
     }
-    static std::vector<float> vector_value(const std::string &text, uint32_t dim) {
-        json a;
-        try {
-            a = json::parse(text);
-        } catch (...) {
-            throw Error("invalid_vector", "invalid vector array");
+    // 直接消费 token 流解析向量，跳过 vector_text() 的字符串拼装。
+    std::vector<float> vector_literal(uint32_t dim) {
+        if (!done() && tokens[pos].quoted) {
+            std::string text = next().text;
+            return vector_value(text, dim);
         }
-        require(a.is_array() && a.size() == dim, "invalid_vector", "vector dimension mismatch");
+        expect("[");
         std::vector<float> v;
         v.reserve(dim);
-        for (const auto &x : a) {
-            require(x.is_number(), "invalid_vector", "vector entries must be numbers");
-            double d = x.get<double>();
-            float f = static_cast<float>(d);
-            require(std::isfinite(d) && std::isfinite(f), "invalid_vector",
-                    "vector must contain finite float32 values");
-            v.push_back(f);
+        if (!is("]")) {
+            do {
+                bool negative = take("-");
+                if (!negative)
+                    take("+");
+                require(pos < tokens.size(), "type_error", "unexpected end of SQL");
+                const Token &t = tokens[pos++];
+                require(!t.quoted && !t.identifier, "type_error", "expected number");
+                double d = 0;
+                auto parsed = std::from_chars(t.text.data(), t.text.data() + t.text.size(), d);
+                require(parsed.ec == std::errc() && parsed.ptr == t.text.data() + t.text.size(),
+                        "type_error", "expected number");
+                if (negative)
+                    d = -d;
+                float f = static_cast<float>(d);
+                require(std::isfinite(d) && std::isfinite(f), "invalid_vector",
+                        "vector must contain finite float32 values");
+                v.push_back(f);
+            } while (take(","));
         }
+        expect("]");
+        require(v.size() == dim, "invalid_vector", "vector dimension mismatch");
+        return v;
+    }
+    static std::vector<float> vector_value(const std::string &text, uint32_t dim) {
+        // 直接扫描 `[a,b,...]` 文本：批量 INSERT 的每个分量都走一次
+        // nlohmann JSON 解析是解析热点，这里改为定长扫描 + from_chars。
+        const char *p = text.data(), *e = p + text.size();
+        auto skip_space = [&] {
+            while (p < e && (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\r'))
+                ++p;
+        };
+        skip_space();
+        require(p < e && *p == '[', "invalid_vector", "invalid vector array");
+        ++p;
+        skip_space();
+        std::vector<float> v;
+        v.reserve(dim);
+        if (p < e && *p == ']') {
+            ++p;
+        } else {
+            while (true) {
+                skip_space();
+                bool negative = false;
+                if (p < e && (*p == '+' || *p == '-')) {
+                    negative = *p == '-';
+                    ++p;
+                }
+                double d = 0;
+                auto parsed = std::from_chars(p, e, d);
+                require(parsed.ec == std::errc() && parsed.ptr != p, "invalid_vector",
+                        "invalid vector array");
+                p = parsed.ptr;
+                if (negative)
+                    d = -d;
+                float f = static_cast<float>(d);
+                require(std::isfinite(d) && std::isfinite(f), "invalid_vector",
+                        "vector must contain finite float32 values");
+                v.push_back(f);
+                skip_space();
+                require(p < e && (*p == ',' || *p == ']'), "invalid_vector",
+                        "invalid vector array");
+                if (*p == ']') {
+                    ++p;
+                    break;
+                }
+                ++p;
+            }
+        }
+        skip_space();
+        require(p == e, "invalid_vector", "invalid vector array");
+        require(v.size() == dim, "invalid_vector", "vector dimension mismatch");
         return v;
     }
     Value literal(const Column &col) {
@@ -246,7 +313,7 @@ class Parser {
             return t.text;
         }
         if (col.type == "vector") {
-            return vector_value(vector_text(), col.size);
+            return vector_literal(col.size);
         }
         throw Error("type_error", "unknown type");
     }
@@ -286,5 +353,109 @@ inline double l2(const char *a, const std::vector<float> &b, size_t n) {
         sum += d * d;
     }
     return std::sqrt(sum);
+}
+// 行体内 float32 与 double 查询向量的平方距离。查询向量在每次检索前转成
+// double，热点循环即可用 AVX2/FMA 一次算 4 个分量；标量版保持 4 路归约，
+// 与 SIMD 版的舍入差异远小于 benchmark 的 1e-10 容差。
+namespace l2_kernel {
+inline double scalar(const float *f, const double *q, size_t n) {
+    double s0 = 0, s1 = 0, s2 = 0, s3 = 0;
+    size_t i = 0;
+    for (; i + 4 <= n; i += 4) {
+        double d0 = double(f[i]) - q[i], d1 = double(f[i + 1]) - q[i + 1];
+        double d2 = double(f[i + 2]) - q[i + 2], d3 = double(f[i + 3]) - q[i + 3];
+        s0 += d0 * d0;
+        s1 += d1 * d1;
+        s2 += d2 * d2;
+        s3 += d3 * d3;
+    }
+    double s = (s0 + s1) + (s2 + s3);
+    for (; i < n; ++i) {
+        double d = double(f[i]) - q[i];
+        s += d * d;
+    }
+    return s;
+}
+#if defined(__x86_64__) || defined(__i386__)
+__attribute__((target("avx2,fma"))) inline double avx2(const float *f, const double *q, size_t n) {
+    __m256d s0 = _mm256_setzero_pd(), s1 = _mm256_setzero_pd();
+    size_t i = 0;
+    for (; i + 8 <= n; i += 8) {
+        __m256d x0 = _mm256_cvtps_pd(_mm_loadu_ps(f + i));
+        __m256d d0 = _mm256_sub_pd(x0, _mm256_loadu_pd(q + i));
+        s0 = _mm256_fmadd_pd(d0, d0, s0);
+        __m256d x1 = _mm256_cvtps_pd(_mm_loadu_ps(f + i + 4));
+        __m256d d1 = _mm256_sub_pd(x1, _mm256_loadu_pd(q + i + 4));
+        s1 = _mm256_fmadd_pd(d1, d1, s1);
+    }
+    if (i + 4 <= n) {
+        __m256d x0 = _mm256_cvtps_pd(_mm_loadu_ps(f + i));
+        __m256d d0 = _mm256_sub_pd(x0, _mm256_loadu_pd(q + i));
+        s0 = _mm256_fmadd_pd(d0, d0, s0);
+        i += 4;
+    }
+    __m256d sum = _mm256_add_pd(s0, s1);
+    alignas(32) double lane[4];
+    _mm256_store_pd(lane, sum);
+    double s = (lane[0] + lane[1]) + (lane[2] + lane[3]);
+    for (; i < n; ++i) {
+        double d = double(f[i]) - q[i];
+        s += d * d;
+    }
+    return s;
+}
+__attribute__((target("avx512f"))) inline double avx512(const float *f, const double *q, size_t n) {
+    __m512d s0 = _mm512_setzero_pd(), s1 = _mm512_setzero_pd();
+    __m512d s2 = _mm512_setzero_pd(), s3 = _mm512_setzero_pd();
+    size_t i = 0;
+    for (; i + 32 <= n; i += 32) {
+        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)),
+                                   _mm512_loadu_pd(q + i));
+        s0 = _mm512_fmadd_pd(d0, d0, s0);
+        __m512d d1 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 8)),
+                                   _mm512_loadu_pd(q + i + 8));
+        s1 = _mm512_fmadd_pd(d1, d1, s1);
+        __m512d d2 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 16)),
+                                   _mm512_loadu_pd(q + i + 16));
+        s2 = _mm512_fmadd_pd(d2, d2, s2);
+        __m512d d3 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 24)),
+                                   _mm512_loadu_pd(q + i + 24));
+        s3 = _mm512_fmadd_pd(d3, d3, s3);
+    }
+    for (; i + 8 <= n; i += 8) {
+        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)),
+                                   _mm512_loadu_pd(q + i));
+        s0 = _mm512_fmadd_pd(d0, d0, s0);
+    }
+    __m512d sum = _mm512_add_pd(_mm512_add_pd(s0, s1), _mm512_add_pd(s2, s3));
+    alignas(64) double lane[8];
+    _mm512_store_pd(lane, sum);
+    double s = ((lane[0] + lane[1]) + (lane[2] + lane[3])) +
+               ((lane[4] + lane[5]) + (lane[6] + lane[7]));
+    for (; i < n; ++i) {
+        double d = double(f[i]) - q[i];
+        s += d * d;
+    }
+    return s;
+}
+#endif
+using Fn = double (*)(const float *, const double *, size_t);
+inline Fn choose() {
+#if defined(__x86_64__) || defined(__i386__)
+    __builtin_cpu_init();
+    if (__builtin_cpu_supports("avx512f"))
+        return avx512;
+    if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"))
+        return avx2;
+#endif
+    return scalar;
+}
+inline Fn fn() {
+    static const Fn picked = choose();
+    return picked;
+}
+} // namespace l2_kernel
+inline double squared_l2(const char *a, const double *q, size_t n) {
+    return l2_kernel::fn()(reinterpret_cast<const float *>(a), q, n);
 }
 } // namespace mini

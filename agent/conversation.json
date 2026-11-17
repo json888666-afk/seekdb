@@ -94,6 +94,13 @@
       "date": "2026-11-16",
       "content": "1. 过滤与 TopK：四条记录的反例支持“必须在满足过滤条件的集合中取 TopK”。全表最近的两条记录都不满足条件，后置过滤为空，而正确查询返回 ID [3,4]。这说明了两种执行顺序为何不等价，并验证了当前程序在该实例上的行为；不能由一个反例的正确处理推断所有过滤组合、距离并列、数据规模和索引更新路径都正确，也不能据此判断正式性能排名。\n2. 提交与强杀恢复：三轮均在收到 COMMIT 成功响应后 SIGKILL，重启后已提交行和向量距离完整；额外未提交事务的插入、更新和删除也在重启后全部回滚。这支持当前实例中的已确认提交持久性，以及普通记录与向量检索的恢复一致性。但只覆盖了有限的强杀时机，尚未穷举提交过程中各个写入点；发送 COMMIT 后尚未收到响应就被终止的情况也不能直接按已确认提交判定。实验没有模拟断电或磁盘损坏，这两类故障也不属于本题限定的进程强杀模型。\n3. 内存口径：/proc 显示 Max address space 为 100663296 字节，支持“此前施加的是 96 MiB 进程虚拟地址空间限制”这一判断。此前较大数据库写入、建索引和重启测试通过，说明该测试不依赖全表常驻进程地址空间。但这些结果没有测量整个容器的峰值内存，不能证明包含文件页缓存及其他进程开销的 Docker 容器也低于 96 MiB；VmSize、VmRSS、VmHWM 也不能互相替代。\n如果下一轮只能增加一种验证，我选择真实 Linux Docker/cgroup v2 环境下的完整资源预算验证：设置明确的内存上限并禁用 swap，完成冷启动、数据装载、建索引、TopK 和强杀重启，读取容器对应 cgroup 的 memory.peak、内存上限及 OOM 事件，同时核对结果正确性。理由是当前容器级资源口径仍缺少直接证据，重复进程级限制测试不能补上这一缺口。96 MiB 压力测试与正式题包资源预算应分别标注，不能混用。这个下一轮验证目前仅为计划，尚未执行。",
       "context": "Assistant retrospective requested by SU2, based on existing E8-E10 and E3 results. It is not additional student evidence and does not report a new experiment."
+    },
+    {
+      "id": "SA3",
+      "source": "assistant",
+      "date": "2026-11-17",
+      "content": "第三轮优化先做同负载 A/B 定位热点：写入侧的 1.28M 个向量分量都要经过 nlohmann JSON 解析，改成括号文本定长扫描 + from_chars、并在 INSERT 路径直接消费 token 后，写入从 3.967 s 降到 1.443 s（tmpfs，ext4 1.961 s）。查询侧把逐分量 double 标量距离换成 AVX2/AVX-512 双累加器平方距离（运行时派发，标量兜底），并把 WHERE 条件下推到向量索引叶子按编码行字节判断，1000 次 TopK 从 2.584 s 降到 0.852 s。没有引入近似索引、常驻向量副本或新缓存，exact TopK 与 11 MB 级峰值内存保持不变。",
+      "context": "Measured with tests/benchmark.py seed 600081 on the WSL2 verification host; all 1000 responses were still checked against the independent Python oracle."
     }
   ],
   "implementation_records": [
@@ -237,6 +244,16 @@
       "output_representation": "Command output and JSON reports stored under validation/constrained-*.json.",
       "summary": "验证机缺少 CAP_SYS_ADMIN 且 Docker 与 cgroup 均不可用，无法构建或启动真实镜像，也未读取容器 memory.peak。改用原生工具等价 2 CPU、2 GiB、128 PID、无 capability、no-new-privs、只读根文件系统后：公开协议 20/20、冷启动 VmHWM 1024 kB、事务中途 SIGKILL 后正确回滚未提交插入、数据目录外无写入、150k×256 数据集 VmHWM 19812 kB、benchmark 查询 1.333650 s 均通过。",
       "output": "constrained protocol passed=true (20 cases); lifecycle cold_start_peak_kb=1024; sigkill recovery kept 3 committed rows; readonly rootfs no EACCES; large 150k x 256 peak_rss_kb=19812 db=163.4MiB; benchmark query_seconds=1.33365 VmHWM=8192 kB"
+    },
+    {
+      "id": "E13",
+      "source": "tool_result",
+      "date": "2026-11-17",
+      "status": "executed",
+      "command": "make && python3 tests/test_engine.py && python3 protocol_check/run.py --command '[\"build/minivectordb\",\"--data-dir\",\"{data_dir}\"]' --output ... ; python3 tests/benchmark.py ; TMPDIR=/dev/shm python3 tests/benchmark.py ; python3 tests/test_engine.py --large-memory",
+      "output_representation": "Verbatim stdout captured on the WSL2 Ubuntu 24.04 host (11th Gen Intel i7-1165G7, 8 threads, AVX2/AVX-512F), GCC 13.3.0, Python 3.12.3.",
+      "summary": "第三轮性能优化：向量字面量改为 from_chars 扫描并在 INSERT 路径直接消费 token；距离核改为 AVX2/AVX-512 双累加器平方距离，剪枝边界放宽 1e-12；过滤条件下推到索引叶子按行字节判断。同机同负载：写入 3.967158 s -> 1.442535 s（tmpfs，ext4 1.960683 s），1000 次 TopK 查询 2.584204 s -> 0.852052 s，VmHWM 11164 kB -> 11136 kB，1000 条查询继续与独立真值逐条核对。",
+      "output": "baseline write_seconds=3.967158 query_seconds=2.584204 index_seconds=0.044331; optimized write_seconds=1.442535 (tmpfs) / 1.960683 (ext4), query_seconds=0.852052, index_seconds=0.0145, process_peak_rss=VmHWM 11136 kB, oracle_checked_queries=1000 passed=true; make check OK 7/7; public 20/20; large-memory passed exit 0"
     }
   ],
   "retrospective": [
@@ -258,6 +275,11 @@
       "source": "assistant",
       "date": "2026-11-16",
       "content": "接力优化优先修真实缺陷而不是堆功能：MANIFEST 恢复窗口、WHERE 括号、按行体算距离、索引块缓存与第 K 名距离剪枝。性能收益来自避免重复 pread 和跳过整行解码，并且用同机 A/B 而不是跨机器数字来说明。放弃 k-means 聚类剪枝，因为 128 维均匀随机数据上球形下界几乎剪不掉桶，却要改索引构建与持久化路径，收益不确定、回归风险高。容器验证只做到原生工具等价约束，明确不声称镜像已构建或容器内存已测量。"
+    },
+    {
+      "source": "assistant",
+      "date": "2026-11-17",
+      "content": "性能优化先量化再改代码：同一份 benchmark 交替跑基线与候选，把写入和查询分开定位，避免把 I/O、fsync 与解析混在一起。向量字面量解析和距离核是两个独立瓶颈，前者用 from_chars 定长扫描，后者用运行时派发的 SIMD 平方距离并放宽 1e-12 剪枝边界；过滤条件下推必须在索引叶子用编码行字节判断，才能在对全表不算距离的前提下保持 exact TopK。"
     }
   ],
   "limitations": [
@@ -269,7 +291,7 @@
     "L1-L3 are an organizational index with no assigned scores. Their student excerpts and result excerpts are separate, non-reused spans. No claim is made that all five grading dimensions are covered.",
     "The user will push manually. No platform precheck or formal submission has been triggered by the assistant."
   ],
-  "updated_date": "2026-11-16",
+  "updated_date": "2026-11-17",
   "evaluation_context": {
     "question_id": 600081,
     "subquestion_id": 800518,
@@ -342,8 +364,8 @@
     }
   ],
   "code_state": {
-    "reference_commit": "b7be60a484387e27ea79dd29e8ab8f09d3877996",
-    "description": "Database implementation changed in this revision: MANIFEST recovery fallback, parenthesized WHERE conjunction, row-body distance evaluation, index block cache and k-th distance pruning.",
+    "reference_commit": "a049eccc0150e6a0cd343448a54d64cb622a670c",
+    "description": "Database implementation changed in this revision: vector literals parsed with a from_chars scan and direct token consumption, AVX2/AVX-512 double-precision squared distance kernels with runtime dispatch and a 1e-12 pruning slack, and WHERE filters pushed into the vector-index leaf so non-matching rows skip distance and decoding.",
     "files": [
       {
         "path": "src/main.cpp",
@@ -351,7 +373,7 @@
       },
       {
         "path": "src/sql.hpp",
-        "sha256": "d6482cbd251aae5af1954d723e7ce2104ea17c0b2a877acf34558729d30e16b4"
+        "sha256": "46f44376a556c20efcdcaa27195cfca745baa36671dcf6cf6ba4888478dedcfe"
       },
       {
         "path": "src/storage.hpp",
@@ -359,11 +381,11 @@
       },
       {
         "path": "src/vector_index.hpp",
-        "sha256": "90284487f5287922eab277bf6eec911c3032609ba2bf63ffd23f7f36af6e58de"
+        "sha256": "e0b264894707a8db7f41cc85d5c695f88cfafb8d0c5e23a377f9966fcd8f0dbb"
       },
       {
         "path": "src/engine.hpp",
-        "sha256": "c4d810ea4bde63b3c53fa59c5dea5e9688baa0325af741a57f178ed4b36eada3"
+        "sha256": "0f1256e6f6caab55e3638a2c7366ac6e4e1eca74ec41bc626410525bdc80523d"
       },
       {
         "path": "Dockerfile",
