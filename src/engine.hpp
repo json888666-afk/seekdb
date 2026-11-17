@@ -130,7 +130,7 @@ struct RawFilter {
 };
 inline void parse_where_atom(Parser &p, const Table &t, Filter &f) {
     int col = t.column(p.identifier());
-    std::string op = p.next().text;
+    std::string op(p.next().text);
     require(op == "=" || op == "<" || op == "<=" || op == ">" || op == ">=", "unsupported_sql",
             "unsupported comparison");
     require(t.columns[col].type != "vector", "unsupported_sql", "vector filtering is unsupported");

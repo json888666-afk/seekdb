@@ -10,6 +10,7 @@ build/minivectordb: src/main.cpp src/sql.hpp src/storage.hpp src/engine.hpp src/
 
 check: all
 	python3 tests/test_engine.py
+	python3 tests/test_parser_views.py
 
 material:
 	python3 agent/check_material.py

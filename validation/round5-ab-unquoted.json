@@ -1,0 +1,234 @@
+{
+  "scope": "local_prepared_request_ab_only",
+  "host_model": "AMD Ryzen 5 9600X 6-Core Processor",
+  "rows": 10000,
+  "dimension": 128,
+  "queries": 1000,
+  "filtered_queries": 500,
+  "seed": 600081,
+  "insert_vector_syntax": "unquoted",
+  "runs": 3,
+  "binary_sha256": {
+    "baseline": "31cb78275d7019004a1d662688a2b9b35214872b10245682eab05f5315f163e7",
+    "candidate": "f1a6ecb10979e3b45a21634d10b33f18fb773d47d5b68dd04c59b615ff0a7783"
+  },
+  "observations": [
+    {
+      "write": {
+        "wall_seconds": 0.8486326969999993,
+        "process_cpu_seconds": 0.41,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3286,
+          "syscw": 10596,
+          "read_bytes": 110592,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.0142681260000046,
+      "query": {
+        "wall_seconds": 0.30596931400000926,
+        "process_cpu_seconds": 0.26999999999999996,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   11048 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 1,
+      "variant": "baseline"
+    },
+    {
+      "write": {
+        "wall_seconds": 0.5897395690000025,
+        "process_cpu_seconds": 0.19,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3296,
+          "syscw": 10596,
+          "read_bytes": 0,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.013433752000011623,
+      "query": {
+        "wall_seconds": 0.2752769979999954,
+        "process_cpu_seconds": 0.25,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   10708 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 1,
+      "variant": "candidate"
+    },
+    {
+      "write": {
+        "wall_seconds": 1.9132654309999992,
+        "process_cpu_seconds": 0.21,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3279,
+          "syscw": 10596,
+          "read_bytes": 0,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.03852030999999556,
+      "query": {
+        "wall_seconds": 0.2749517769999983,
+        "process_cpu_seconds": 0.24999999999999997,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   10676 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 2,
+      "variant": "candidate"
+    },
+    {
+      "write": {
+        "wall_seconds": 0.8240019349999983,
+        "process_cpu_seconds": 0.4,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3291,
+          "syscw": 10596,
+          "read_bytes": 0,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.013919537999996123,
+      "query": {
+        "wall_seconds": 0.30379783799999416,
+        "process_cpu_seconds": 0.27,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   10928 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 2,
+      "variant": "baseline"
+    },
+    {
+      "write": {
+        "wall_seconds": 2.0919541020000025,
+        "process_cpu_seconds": 0.41,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3270,
+          "syscw": 10596,
+          "read_bytes": 0,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.034952323999988266,
+      "query": {
+        "wall_seconds": 0.293670388999999,
+        "process_cpu_seconds": 0.26000000000000006,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   11100 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 3,
+      "variant": "baseline"
+    },
+    {
+      "write": {
+        "wall_seconds": 1.9800697780000007,
+        "process_cpu_seconds": 0.2,
+        "process_io_delta": {
+          "rchar": 25450888,
+          "wchar": 6543986,
+          "syscr": 3266,
+          "syscw": 10596,
+          "read_bytes": 0,
+          "write_bytes": 7352320,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "index_seconds": 0.040327646999998024,
+      "query": {
+        "wall_seconds": 0.2815077119999927,
+        "process_cpu_seconds": 0.25,
+        "process_io_delta": {
+          "rchar": 13514407,
+          "wchar": 301496,
+          "syscr": 21166,
+          "syscw": 1000,
+          "read_bytes": 0,
+          "write_bytes": 0,
+          "cancelled_write_bytes": 0
+        }
+      },
+      "peak_rss": "VmHWM:\t   10644 kB",
+      "database_bytes": 12093396,
+      "passed": true,
+      "run": 3,
+      "variant": "candidate"
+    }
+  ],
+  "median_wall_seconds": {
+    "baseline": {
+      "write": 0.8486326969999993,
+      "query": 0.30379783799999416
+    },
+    "candidate": {
+      "write": 1.9132654309999992,
+      "query": 0.2752769979999954
+    }
+  },
+  "oracle_checked_queries_per_run": 1000,
+  "passed": true,
+  "note": "Requests and independent truth prepared outside timing. Process CPU/RSS/io counters are not cgroup metrics or official E. Data directories use tempfile default filesystem; record TMPDIR externally."
+}

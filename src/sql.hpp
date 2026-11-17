@@ -5,12 +5,14 @@
 #include <cstdint>
 #include <charconv>
 #include <cstring>
+#include <deque>
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <vector>
 
@@ -20,9 +22,9 @@ struct Error : std::runtime_error {
     std::string code;
     Error(std::string c, std::string m) : std::runtime_error(m), code(std::move(c)) {}
 };
-inline void require(bool b, const std::string &code, const std::string &msg) {
+inline void require(bool b, std::string_view code, std::string_view msg) {
     if (!b)
-        throw Error(code, msg);
+        throw Error(std::string(code), std::string(msg));
 }
 inline std::string lower(std::string s) {
     for (char &c : s)
@@ -39,15 +41,36 @@ struct Column {
     uint32_t size = 0;
 };
 struct Token {
-    std::string text;
+    std::string_view text;
     bool quoted = false, identifier = false;
 };
 class Parser {
+    // SQL must outlive the parser. Escaped values have stable storage even when
+    // the token vector grows or another escaped literal is decoded.
+    std::deque<std::string> decoded;
     std::vector<Token> tokens;
     size_t pos = 0;
 
+    static bool equal_keyword(std::string_view a, std::string_view b) {
+        if (a.size() != b.size())
+            return false;
+        for (size_t i = 0; i < a.size(); ++i) {
+            unsigned char x = a[i], y = b[i];
+            if (x >= 'A' && x <= 'Z')
+                x += 'a' - 'A';
+            if (y >= 'A' && y <= 'Z')
+                y += 'a' - 'A';
+            if (x != y)
+                return false;
+        }
+        return true;
+    }
+
   public:
+    Parser(const Parser &) = delete;
+    Parser &operator=(const Parser &) = delete;
     explicit Parser(const std::string &sql) {
+        const std::string_view input(sql);
         for (size_t i = 0; i < sql.size();) {
             unsigned char c = sql[i];
             if (std::isspace(c)) {
@@ -70,18 +93,35 @@ class Parser {
                 char quote = c;
                 bool closed = false;
                 std::string text;
-                ++i;
+                size_t start = ++i, part = start;
+                bool escaped = false;
                 while (i < sql.size()) {
-                    char x = sql[i++];
+                    char x = sql[i];
                     if (x == quote) {
-                        if (i < sql.size() && sql[i] == quote) {
+                        if (i + 1 < sql.size() && sql[i + 1] == quote) {
+                            text.append(sql, part, i - part);
                             text += quote;
-                            ++i;
+                            escaped = true;
+                            i += 2;
+                            part = i;
                         } else {
+                            std::string_view value;
+                            if (escaped) {
+                                text.append(sql, part, i - part);
+                                decoded.push_back(std::move(text));
+                                value = decoded.back();
+                            } else {
+                                value = input.substr(start, i - start);
+                            }
+                            tokens.push_back({value, quote == '\'', quote != '\''});
+                            ++i;
                             closed = true;
                             break;
                         }
-                    } else if (x == '\\' && quote == '\'' && i < sql.size()) {
+                    } else if (x == '\\' && quote == '\'' && i + 1 < sql.size()) {
+                        text.append(sql, part, i - part);
+                        escaped = true;
+                        ++i;
                         char esc = sql[i++];
                         switch (esc) {
                         case 'n':
@@ -99,11 +139,12 @@ class Parser {
                         default:
                             text += esc;
                         }
-                    } else
-                        text += x;
+                        part = i;
+                    } else {
+                        ++i;
+                    }
                 }
                 require(closed, "syntax_error", "unterminated quoted token");
-                tokens.push_back({text, quote == '\'', quote != '\''});
                 continue;
             }
             if (std::isdigit(c) || c == '.') {
@@ -118,7 +159,7 @@ class Parser {
                     while (i < sql.size() && std::isdigit(static_cast<unsigned char>(sql[i])))
                         ++i;
                 }
-                tokens.push_back({sql.substr(start, i - start)});
+                tokens.push_back({input.substr(start, i - start)});
                 continue;
             }
             if (std::isalpha(c) || c == '_' || c >= 128) {
@@ -129,31 +170,32 @@ class Parser {
                         break;
                     ++i;
                 }
-                tokens.push_back({sql.substr(start, i - start), false, true});
+                tokens.push_back({input.substr(start, i - start), false, true});
                 continue;
             }
-            std::string op(1, sql[i++]);
-            if (i < sql.size() && (op == "<" || op == ">" || op == "!") &&
-                (sql[i] == '=' || (op == "<" && sql[i] == '>')))
-                op += sql[i++];
-            tokens.push_back({op});
+            size_t start = i++;
+            if (i < sql.size() && (c == '<' || c == '>' || c == '!') &&
+                (sql[i] == '=' || (c == '<' && sql[i] == '>')))
+                ++i;
+            tokens.push_back({input.substr(start, i - start)});
         }
     }
     bool done() const {
         return pos == tokens.size();
     }
-    bool is(const std::string &s) const {
-        return !done() && !tokens[pos].quoted && lower(tokens[pos].text) == lower(s);
+    bool is(std::string_view s) const {
+        return !done() && !tokens[pos].quoted && equal_keyword(tokens[pos].text, s);
     }
-    bool take(const std::string &s) {
+    bool take(std::string_view s) {
         if (is(s)) {
             ++pos;
             return true;
         }
         return false;
     }
-    void expect(const std::string &s) {
-        require(take(s), "syntax_error", "expected " + s);
+    void expect(std::string_view s) {
+        if (!take(s))
+            throw Error("syntax_error", "expected " + std::string(s));
     }
     Token next() {
         require(!done(), "syntax_error", "unexpected end of SQL");
@@ -162,7 +204,7 @@ class Parser {
     std::string identifier(bool fold = true) {
         Token t = next();
         require(t.identifier, "syntax_error", "expected identifier");
-        return fold ? lower(t.text) : t.text;
+        return fold ? lower(std::string(t.text)) : std::string(t.text);
     }
     void finish() {
         take(";");
@@ -176,19 +218,25 @@ class Parser {
             take("+");
         Token t = next();
         require(!t.quoted && !t.identifier, "type_error", "expected number");
-        return sign + t.text;
+        sign.append(t.text);
+        return sign;
     }
     int64_t integer() {
-        std::string s = number();
-        size_t end = 0;
-        int64_t v;
-        try {
-            v = std::stoll(s, &end);
-        } catch (...) {
-            throw Error("value_out_of_range", "BIGINT out of range");
-        }
-        require(end == s.size(), "type_error", "expected BIGINT integer");
-        return v;
+        bool negative = take("-");
+        if (!negative)
+            take("+");
+        Token t = next();
+        require(!t.quoted && !t.identifier, "type_error", "expected number");
+        uint64_t magnitude = 0;
+        auto parsed = std::from_chars(t.text.data(), t.text.data() + t.text.size(), magnitude);
+        uint64_t limit = negative ? uint64_t(INT64_MAX) + 1 : uint64_t(INT64_MAX);
+        require(parsed.ec == std::errc() && magnitude <= limit, "value_out_of_range",
+                "BIGINT out of range");
+        require(parsed.ptr == t.text.data() + t.text.size(), "type_error",
+                "expected BIGINT integer");
+        if (negative && magnitude == uint64_t(INT64_MAX) + 1)
+            return INT64_MIN;
+        return negative ? -int64_t(magnitude) : int64_t(magnitude);
     }
     uint32_t size_parameter() {
         int64_t v = integer();
@@ -197,7 +245,7 @@ class Parser {
     }
     std::string vector_text() {
         if (!done() && tokens[pos].quoted)
-            return next().text;
+            return std::string(next().text);
         expect("[");
         std::string text = "[";
         if (!is("]")) {
@@ -213,8 +261,7 @@ class Parser {
     // 直接消费 token 流解析向量，跳过 vector_text() 的字符串拼装。
     std::vector<float> vector_literal(uint32_t dim) {
         if (!done() && tokens[pos].quoted) {
-            std::string text = next().text;
-            return vector_value(text, dim);
+            return vector_value(next().text, dim);
         }
         expect("[");
         std::vector<float> v;
@@ -243,7 +290,7 @@ class Parser {
         require(v.size() == dim, "invalid_vector", "vector dimension mismatch");
         return v;
     }
-    static std::vector<float> vector_value(const std::string &text, uint32_t dim) {
+    static std::vector<float> vector_value(std::string_view text, uint32_t dim) {
         // 直接扫描 `[a,b,...]` 文本：批量 INSERT 的每个分量都走一次
         // nlohmann JSON 解析是解析热点，这里改为定长扫描 + from_chars。
         const char *p = text.data(), *e = p + text.size();
@@ -310,7 +357,7 @@ class Parser {
                 if ((c & 0xc0) != 0x80)
                     ++chars;
             require(chars <= col.size, "value_too_long", "VARCHAR exceeds character limit");
-            return t.text;
+            return std::string(t.text);
         }
         if (col.type == "vector") {
             return vector_literal(col.size);
@@ -409,11 +456,10 @@ __attribute__((target("avx512f"))) inline double avx512(const float *f, const do
     __m512d s2 = _mm512_setzero_pd(), s3 = _mm512_setzero_pd();
     size_t i = 0;
     for (; i + 32 <= n; i += 32) {
-        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)),
-                                   _mm512_loadu_pd(q + i));
+        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)), _mm512_loadu_pd(q + i));
         s0 = _mm512_fmadd_pd(d0, d0, s0);
-        __m512d d1 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 8)),
-                                   _mm512_loadu_pd(q + i + 8));
+        __m512d d1 =
+            _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 8)), _mm512_loadu_pd(q + i + 8));
         s1 = _mm512_fmadd_pd(d1, d1, s1);
         __m512d d2 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i + 16)),
                                    _mm512_loadu_pd(q + i + 16));
@@ -423,15 +469,14 @@ __attribute__((target("avx512f"))) inline double avx512(const float *f, const do
         s3 = _mm512_fmadd_pd(d3, d3, s3);
     }
     for (; i + 8 <= n; i += 8) {
-        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)),
-                                   _mm512_loadu_pd(q + i));
+        __m512d d0 = _mm512_sub_pd(_mm512_cvtps_pd(_mm256_loadu_ps(f + i)), _mm512_loadu_pd(q + i));
         s0 = _mm512_fmadd_pd(d0, d0, s0);
     }
     __m512d sum = _mm512_add_pd(_mm512_add_pd(s0, s1), _mm512_add_pd(s2, s3));
     alignas(64) double lane[8];
     _mm512_store_pd(lane, sum);
-    double s = ((lane[0] + lane[1]) + (lane[2] + lane[3])) +
-               ((lane[4] + lane[5]) + (lane[6] + lane[7]));
+    double s =
+        ((lane[0] + lane[1]) + (lane[2] + lane[3])) + ((lane[4] + lane[5]) + (lane[6] + lane[7]));
     for (; i < n; ++i) {
         double d = double(f[i]) - q[i];
         s += d * d;

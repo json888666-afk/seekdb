@@ -3,6 +3,8 @@
 本实现对应 [OceanBase 训练营「性能评测」](https://open.oceanbase.com/train/TopicDetails?questionId=600081&subQesitonId=800517) 和官方 `2026-competition-round2` 题包。
 采用 C++20，自行实现 SQL 执行、磁盘 B+ 树、向量块索引、事务和恢复。唯一第三方代码是已随源码交付的 nlohmann/json 3.11.3（JSON 解析及序列化，MIT 许可）。不依赖外部数据库、存储或向量引擎。
 
+当前 Round 5 改动、基线对照、验证记录和推送方式见 [HANDOFF-round5.md](HANDOFF-round5.md)。
+
 ## 构建及运行
 
 Linux x86_64，GCC 13.3+，GNU Make，测试需要 Python 3.9+，无 pip 运行依赖。

@@ -1,0 +1,125 @@
+{
+  "baseline_commit": "8736a8034c9c9fe33021f2806993383cda369ba3",
+  "host_model": "AMD Ryzen 5 9600X 6-Core Processor",
+  "scope": "same-host diagnostic, not official score",
+  "groups": [
+    {
+      "report": "validation/round5-ab-quoted.json",
+      "filesystem": "WSL ext4 /tmp (statfs ext2/ext3)",
+      "vector_syntax": "quoted",
+      "wall_medians": {
+        "baseline": {
+          "write": 1.9980171359999979,
+          "query": 0.31123791399999945
+        },
+        "candidate": {
+          "write": 1.8529070749999992,
+          "query": 0.2806439629999993
+        }
+      },
+      "cpu_medians": {
+        "baseline": {
+          "write": 0.27,
+          "query": 0.28
+        },
+        "candidate": {
+          "write": 0.18,
+          "query": 0.26
+        }
+      },
+      "peak_rss_kib": {
+        "baseline": 11052,
+        "candidate": 10636
+      }
+    },
+    {
+      "report": "validation/round5-ab-tmpfs-unquoted.json",
+      "filesystem": "tmpfs /dev/shm",
+      "vector_syntax": "unquoted",
+      "wall_medians": {
+        "baseline": {
+          "write": 0.3841809939999905,
+          "query": 0.29402076099998453
+        },
+        "candidate": {
+          "write": 0.18309892999999988,
+          "query": 0.27484408200001553
+        }
+      },
+      "cpu_medians": {
+        "baseline": {
+          "write": 0.37,
+          "query": 0.27
+        },
+        "candidate": {
+          "write": 0.17,
+          "query": 0.24999999999999997
+        }
+      },
+      "peak_rss_kib": {
+        "baseline": 11060,
+        "candidate": 10752
+      }
+    },
+    {
+      "report": "validation/round5-ab-tmpfs.json",
+      "filesystem": "tmpfs /dev/shm",
+      "vector_syntax": "quoted",
+      "wall_medians": {
+        "baseline": {
+          "write": 0.2537320239999872,
+          "query": 0.30601348200002576
+        },
+        "candidate": {
+          "write": 0.1636490000000208,
+          "query": 0.28925303599999097
+        }
+      },
+      "cpu_medians": {
+        "baseline": {
+          "write": 0.24,
+          "query": 0.27
+        },
+        "candidate": {
+          "write": 0.15,
+          "query": 0.26
+        }
+      },
+      "peak_rss_kib": {
+        "baseline": 11100,
+        "candidate": 10640
+      }
+    },
+    {
+      "report": "validation/round5-ab-unquoted.json",
+      "filesystem": "WSL ext4 /tmp (statfs ext2/ext3)",
+      "vector_syntax": "unquoted",
+      "wall_medians": {
+        "baseline": {
+          "write": 0.8486326969999993,
+          "query": 0.30379783799999416
+        },
+        "candidate": {
+          "write": 1.9132654309999992,
+          "query": 0.2752769979999954
+        }
+      },
+      "cpu_medians": {
+        "baseline": {
+          "write": 0.41,
+          "query": 0.26999999999999996
+        },
+        "candidate": {
+          "write": 0.2,
+          "query": 0.25
+        }
+      },
+      "peak_rss_kib": {
+        "baseline": 11048,
+        "candidate": 10676
+      }
+    }
+  ],
+  "correctness": "all 1000 queries checked in each of 24 runs",
+  "caveat": "ext4 write wall time is highly variable; unquoted ext4 candidate median is slower despite lower process CPU time; no uniform ext4 write acceleration is claimed"
+}

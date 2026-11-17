@@ -1,0 +1,10 @@
+{
+  "source": "user_reported_platform_result",
+  "date": "2026-11-17",
+  "commit": "8736a8034c9c9fe33021f2806993383cda369ba3",
+  "mysql_formal_cases": "passed, as reported by user",
+  "performance_raw_E": "951.645912",
+  "agent_prompt_raw_score": "3.000000",
+  "ranking_points": null,
+  "verification_note": "The user supplied these results in the handoff. This assistant has not independently read the platform receipt. These are raw metrics, not 40-point ranking scores; no result is reported for the new candidate."
+}

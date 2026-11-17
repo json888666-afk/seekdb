@@ -1,0 +1,9 @@
+test_decoded_literals_survive_token_growth_and_future_requests (__main__.ParserViewTests.test_decoded_literals_survive_token_growth_and_future_requests) ... ok
+test_failed_statement_discards_borrowed_and_decoded_values (__main__.ParserViewTests.test_failed_statement_discards_borrowed_and_decoded_values) ... ok
+test_integer_limits_and_type_errors (__main__.ParserViewTests.test_integer_limits_and_type_errors) ... ok
+test_quotes_comments_and_empty_strings (__main__.ParserViewTests.test_quotes_comments_and_empty_strings) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.465s
+
+OK
