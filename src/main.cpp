@@ -23,48 +23,44 @@ int main(int argc, char **argv) {
         std::cout << "{\"type\":\"ready\"}\n" << std::flush;
         std::string line;
         while (std::getline(std::cin, line)) {
-            mini::json id = nullptr;
+            mini::ReqId err_id;
             try {
-                // nlohmann preserves integer IDs and rejects non-finite JSON tokens.
-                auto req = mini::json::parse(line);
-                mini::require(req.is_object(), "invalid_request", "expected object");
-                if (req.contains("id"))
-                    id = req["id"];
-                mini::require(req.contains("id") && req.contains("op") && req["op"].is_string(),
-                              "invalid_request", "id/op required");
-                auto op = req["op"].get<std::string>();
-                if (op == "shutdown") {
+                auto req = mini::parse_request(line);
+                err_id = req.id;
+                if (req.op == "shutdown") {
                     db.shutdown();
-                    std::cout << mini::json({{"id", id}, {"ok", true}}).dump() << '\n'
-                              << std::flush;
+                    std::cout << "{\"id\":";
+                    req.id.write_to(std::cout);
+                    std::cout << ",\"ok\":true}\n" << std::flush;
                     return 0;
                 }
-                mini::require(op == "execute" && req.contains("sql") && req["sql"].is_string(),
-                              "invalid_request", "execute requires SQL string");
-                mini::require(!req.contains("search_mode") || req["search_mode"].is_string(),
-                              "invalid_request", "invalid search mode");
-                auto result =
-                    db.execute(req["sql"], req.value("search_mode", std::string("exact")), id);
+                auto mode = req.has_search_mode ? req.search_mode : std::string("exact");
+                auto result = db.execute(req.sql, mode, req.id);
                 if (result) {
-                    (*result)["id"] = id;
-                    (*result)["ok"] = true;
-                    std::cout << result->dump() << '\n' << std::flush;
+                    std::string inner = result->dump();
+                    std::cout << "{\"id\":";
+                    req.id.write_to(std::cout);
+                    std::cout << ",\"ok\":true";
+                    if (inner.size() > 2) {
+                        std::cout << ',';
+                        std::cout << inner.substr(1, inner.size() - 2);
+                    }
+                    std::cout << "}\n" << std::flush;
                 }
             } catch (const mini::Error &e) {
-                std::cout << mini::json({{"id", id},
-                                         {"ok", false},
-                                         {"error", {{"code", e.code}, {"message", e.what()}}}})
-                                 .dump()
-                          << '\n'
-                          << std::flush;
-            } catch (const mini::json::exception &e) {
-                std::cout << mini::json(
-                                 {{"id", id},
-                                  {"ok", false},
-                                  {"error", {{"code", "invalid_request"}, {"message", e.what()}}}})
-                                 .dump()
-                          << '\n'
-                          << std::flush;
+                std::cout << "{\"id\":";
+                err_id.write_to(std::cout);
+                std::cout << ",\"ok\":false,\"error\":{\"code\":";
+                mini::write_json_string(std::cout, e.code);
+                std::cout << ",\"message\":";
+                mini::write_json_string(std::cout, e.what());
+                std::cout << "}}\n" << std::flush;
+            } catch (const std::exception &e) {
+                std::cout << "{\"id\":";
+                err_id.write_to(std::cout);
+                std::cout << ",\"ok\":false,\"error\":{\"code\":\"invalid_request\",\"message\":";
+                mini::write_json_string(std::cout, e.what());
+                std::cout << "}}\n" << std::flush;
             }
         }
         db.shutdown();

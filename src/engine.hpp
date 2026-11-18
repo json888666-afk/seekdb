@@ -189,6 +189,8 @@ struct Candidate {
     int64_t pk;
     uint64_t offset;
     std::vector<Value> keys;
+    // 有界 TopK 保留已解码的行，输出阶段就不必按行号回读磁盘。
+    std::vector<Value> row;
 };
 struct Better {
     const std::vector<Order> *orders;
@@ -523,7 +525,7 @@ class Engine {
             });
         return {{"affected_rows", count}};
     }
-    void select(Parser &p, const json &id) {
+    void select(Parser &p, const ReqId &id) {
         std::vector<Expr> projections;
         bool star = p.take("*");
         if (!star) {
@@ -580,22 +582,28 @@ class Engine {
             limit = n;
         }
         p.finish();
-        json names = json::array();
-        for (auto &e : projections)
-            names.push_back(e.name);
         auto start = [&]() {
-            std::cout << "{\"id\":" << id.dump() << ",\"ok\":true,\"columns\":" << names.dump()
-                      << ",\"rows\":[";
+            std::cout << "{\"id\":";
+            id.write_to(std::cout);
+            std::cout << ",\"ok\":true,\"columns\":[";
+            for (size_t i = 0; i < projections.size(); ++i) {
+                if (i) std::cout << ',';
+                write_json_string(std::cout, projections[i].name);
+            }
+            std::cout << "],\"rows\":[";
         };
         bool first = true;
         auto emit_row = [&](const std::vector<Value> &row) {
-            json result = json::array();
-            for (auto &e : projections)
-                result.push_back(value_json(e.eval(row)));
+            // 直接手写 JSON array，绕开每行一个 json::array + dump 的开销
             if (!first)
                 std::cout << ',';
             first = false;
-            std::cout << result.dump(-1, ' ', false, json::error_handler_t::strict);
+            std::cout << '[';
+            for (size_t ei = 0; ei < projections.size(); ++ei) {
+                if (ei) std::cout << ',';
+                write_value(std::cout, projections[ei].eval(row));
+            }
+            std::cout << ']';
         };
         if (orders.empty()) {
             start();
@@ -616,21 +624,41 @@ class Engine {
             auto consider = [&](int64_t key, uint64_t off, const std::vector<Value> &row) {
                 if (!f.matches(row))
                     return;
-                Candidate c{key, off, {}};
+                Candidate c{key, off, {}, {}};
                 for (auto &o : orders)
                     c.keys.push_back(o.expr.eval(row));
                 if (limit == UINT64_MAX)
                     sorter.add(std::move(c));
-                else if (heap.size() < limit)
+                else if (heap.size() < limit) {
+                    c.row = row;
                     heap.push(std::move(c));
-                else if (better(c, heap.top())) {
+                } else if (better(c, heap.top())) {
+                    c.row = row;
                     heap.pop();
                     heap.push(std::move(c));
                 }
             };
             if (limit && !f.empty) {
                 if (!t.indexes.empty() && orders[0].expr.distance && !orders[0].desc &&
-                    limit != UINT64_MAX) {
+                    limit != UINT64_MAX && limit <= 4096 && t.delta_root == 0 &&
+                    !constrained_address_space()) {
+                    // 并行 TopK：索引先给出距离前 K 名（各线程局部堆合并），再交给
+                    // 统一的排序器处理投影、WHERE 与并列名次，结果与原来的逐行
+                    // 剪枝一致。
+                    std::vector<VectorIndex::Hit> hits;
+                    if (f.conditions.empty()) {
+                        auto any = [](const char *, size_t) { return true; };
+                        hits = VectorIndex(store, t).search_topk(orders[0].expr.query, f.lo, f.hi,
+                                                                 limit, any, scan_threads());
+                    } else {
+                        RawFilter raw{&t, &f.conditions};
+                        hits = VectorIndex(store, t).search_topk(orders[0].expr.query, f.lo, f.hi,
+                                                                 limit, raw, scan_threads());
+                    }
+                    for (auto &hit : hits)
+                        consider(hit.key, hit.offset, hit.row);
+                } else if (!t.indexes.empty() && orders[0].expr.distance && !orders[0].desc &&
+                           limit != UINT64_MAX) {
                     auto threshold = [&]() {
                         return heap.size() < limit ? INFINITY
                                                    : std::get<double>(heap.top().keys[0]);
@@ -652,7 +680,9 @@ class Engine {
                     });
             }
             start();
-            auto emit = [&](const Candidate &c) { emit_row(store.read_row(t, c.offset)); };
+            auto emit = [&](const Candidate &c) {
+                emit_row(c.row.empty() ? store.read_row(t, c.offset) : c.row);
+            };
             if (limit == UINT64_MAX)
                 sorter.output(emit);
             else {
@@ -680,7 +710,7 @@ class Engine {
         }
     }
     // SELECT serializes its response directly to avoid buffering complete result sets.
-    std::optional<json> execute(const std::string &sql, const std::string &mode, const json &id) {
+    std::optional<json> execute(const std::string &sql, const std::string &mode, const ReqId &id) {
         require(mode == "exact" || mode == "ann", "invalid_mode",
                 "search_mode must be exact or ann");
         Parser p(sql);

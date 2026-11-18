@@ -4,15 +4,18 @@
 #include <cmath>
 #include <cstdint>
 #include <charconv>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
 #endif
 #include <limits>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -32,10 +35,289 @@ inline std::string lower(std::string s) {
             c += 'a' - 'A';
     return s;
 }
+// 词法扫描逐字节判定字符类。std::isspace/isdigit 等在 glibc 里要经
+// __ctype_b_loc() 取表，每次调用都是外部函数开销；批量 INSERT 的语句有
+// 十几万字符，改成本地内联比较后词法阶段不再是写入热点。
+inline bool char_space(unsigned char c) {
+    return c == ' ' || (c >= '\t' && c <= '\r');
+}
+inline bool char_digit(unsigned char c) {
+    return c >= '0' && c <= '9';
+}
+inline bool char_alpha(unsigned char c) {
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z');
+}
+inline bool char_alnum(unsigned char c) {
+    return char_alpha(c) || char_digit(c);
+}
 using Value = std::variant<int64_t, std::string, std::vector<float>, double>;
 inline json value_json(const Value &v) {
     return std::visit([](auto &&x) -> json { return x; }, v);
 }
+
+// 手写紧凑 JSON 输出，绕开 nlohmann 的通用序列化开销。保证 round-trip
+// 精度（double 用 max_digits10）。所有函数操作 std::ostream。
+
+inline std::ostream &write_json_string(std::ostream &out, std::string_view s) {
+    out << '"';
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"': out << "\\\""; break;
+            case '\\': out << "\\\\"; break;
+            case '\b': out << "\\b"; break;
+            case '\f': out << "\\f"; break;
+            case '\n': out << "\\n"; break;
+            case '\r': out << "\\r"; break;
+            case '\t': out << "\\t"; break;
+            default:
+                if (c < 0x20) {
+                    char buf[16];
+                    int n = std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    out.write(buf, n);
+                } else
+                    out.put(static_cast<char>(c));
+        }
+    }
+    out << '"';
+    return out;
+}
+
+inline std::ostream &write_json_double(std::ostream &out, double d) {
+    char buf[64];
+    auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), d,
+                                 std::chars_format::general,
+                                 std::numeric_limits<double>::max_digits10);
+    if (ec == std::errc{}) {
+        out.write(buf, p - buf);
+    } else {
+        int n = std::snprintf(buf, sizeof(buf), "%.17g", d);
+        out.write(buf, n);
+    }
+    return out;
+}
+
+inline std::ostream &write_json_float(std::ostream &out, float f) {
+    return write_json_double(out, static_cast<double>(f));
+}
+
+inline std::ostream &write_json_int64(std::ostream &out, int64_t n) {
+    char buf[32];
+    auto [p, ec] = std::to_chars(buf, buf + sizeof(buf), n);
+    if (ec == std::errc{})
+        out.write(buf, p - buf);
+    return out;
+}
+
+inline std::ostream &write_value(std::ostream &out, const Value &v) {
+    std::visit([&](auto &&x) {
+        using T = std::decay_t<decltype(x)>;
+        if constexpr (std::is_same_v<T, int64_t>) {
+            write_json_int64(out, x);
+        } else if constexpr (std::is_same_v<T, double>) {
+            write_json_double(out, x);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            write_json_string(out, x);
+        } else if constexpr (std::is_same_v<T, std::vector<float>>) {
+            out.put('[');
+            for (size_t i = 0; i < x.size(); ++i) {
+                if (i) out.put(',');
+                write_json_float(out, x[i]);
+            }
+            out.put(']');
+        }
+    }, v);
+    return out;
+}
+
+// ===== 极简 JSON 请求解析 + ReqId 序列化 =====
+// 只覆盖本题协议需要的固定格式：顶层 object，key 为 id/op/sql/search_mode；
+// value 仅需支持 null / integer / string / true|false / float。
+// 解析器跳过空白，不解析嵌套 object/array（请求里不会出现）。
+
+struct ReqId {
+    enum Type { NONE, INT, STRING, NULL_VAL };
+    Type type = NONE;
+    int64_t i = 0;
+    std::string s;
+
+    // 按 JSON 格式写入 id：null / 整数 / 字符串
+    void write_to(std::ostream &out) const {
+        switch (type) {
+            case INT:  write_json_int64(out, i); break;
+            case STRING: write_json_string(out, s); break;
+            default:   out << "null"; break;
+        }
+    }
+};
+
+struct Request {
+    ReqId id;
+    std::string op;
+    std::string sql;
+    bool has_search_mode = false;
+    std::string search_mode;
+};
+
+namespace detail_json {
+inline void skip_ws(std::string_view s, size_t &i) {
+    while (i < s.size() && (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || s[i] == '\n'))
+        ++i;
+}
+inline std::string parse_string(std::string_view s, size_t &i) {
+    require(i < s.size() && s[i] == '"', "invalid_request", "expected string");
+    ++i; // opening "
+    std::string out;
+    while (i < s.size() && s[i] != '"') {
+        char c = s[i++];
+        if (c == '\\') {
+            require(i < s.size(), "invalid_request", "bad escape");
+            char e = s[i++];
+            switch (e) {
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '/': out.push_back('/'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case 'u': {
+                    require(i + 4 <= s.size(), "invalid_request", "bad \\u");
+                    // 我们不支持完整 unicode 代理对；这里只支持 \uXXXX 中 BMP 内的
+                    unsigned cp = 0;
+                    for (int k = 0; k < 4; ++k) {
+                        char h = s[i++];
+                        cp <<= 4;
+                        if (h >= '0' && h <= '9') cp |= h - '0';
+                        else if (h >= 'a' && h <= 'f') cp |= h - 'a' + 10;
+                        else if (h >= 'A' && h <= 'F') cp |= h - 'A' + 10;
+                        else require(false, "invalid_request", "bad \\u hex");
+                    }
+                    if (cp < 0x80) out.push_back(static_cast<char>(cp));
+                    else if (cp < 0x800) {
+                        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+                        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    } else {
+                        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+                        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+                        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+                    }
+                    break;
+                }
+                default: require(false, "invalid_request", "unsupported escape");
+            }
+        } else
+            out.push_back(c);
+    }
+    require(i < s.size() && s[i] == '"', "invalid_request", "unterminated string");
+    ++i; // closing "
+    return out;
+}
+
+inline int64_t parse_integer(std::string_view s, size_t &i) {
+    size_t start = i;
+    if (i < s.size() && (s[i] == '+' || s[i] == '-')) ++i;
+    require(i < s.size() && (s[i] >= '0' && s[i] <= '9'), "invalid_request", "expected integer");
+    int64_t v = 0;
+    bool neg = (s[start] == '-');
+    for (; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i) {
+        v = v * 10 + (s[i] - '0');
+    }
+    return neg ? -v : v;
+}
+
+inline bool match_keyword(std::string_view s, size_t &i, const char *kw) {
+    size_t k = 0;
+    while (kw[k]) {
+        if (i + k >= s.size() || s[i + k] != kw[k]) return false;
+        ++k;
+    }
+    i += k;
+    return true;
+}
+} // namespace detail_json
+
+inline Request parse_request(std::string_view s) {
+    using namespace detail_json;
+    size_t i = 0;
+    skip_ws(s, i);
+    require(i < s.size() && s[i] == '{', "invalid_request", "expected object");
+    ++i;
+    Request req;
+    bool has_id = false, has_op = false, has_sql = false;
+    skip_ws(s, i);
+    if (i < s.size() && s[i] == '}') { ++i; goto done; }
+    while (true) {
+        skip_ws(s, i);
+        std::string key = parse_string(s, i);
+        skip_ws(s, i);
+        require(i < s.size() && s[i] == ':', "invalid_request", "expected colon");
+        ++i;
+        skip_ws(s, i);
+        if (key == "id") {
+            // id 可以是 null / integer / string
+            require(i < s.size(), "invalid_request", "expected id value");
+            if (s[i] == 'n' && match_keyword(s, i, "null")) {
+                req.id.type = ReqId::NULL_VAL;
+            } else if (s[i] == '"') {
+                req.id.s = parse_string(s, i);
+                req.id.type = ReqId::STRING;
+            } else {
+                // integer（允许前导 +/-）
+                req.id.i = parse_integer(s, i);
+                req.id.type = ReqId::INT;
+            }
+            has_id = true;
+        } else if (key == "op") {
+            req.op = parse_string(s, i);
+            has_op = true;
+        } else if (key == "sql") {
+            req.sql = parse_string(s, i);
+            has_sql = true;
+        } else if (key == "search_mode") {
+            req.search_mode = parse_string(s, i);
+            req.has_search_mode = true;
+        } else {
+            // 跳过未知 key 的 value：string / null / bool / number
+            if (s[i] == '"') parse_string(s, i);
+            else if (s[i] == 'n' && match_keyword(s, i, "null")) {}
+            else if (s[i] == 't' && match_keyword(s, i, "true")) {}
+            else if (s[i] == 'f' && match_keyword(s, i, "false")) {}
+            else if (s[i] == '{' || s[i] == '[') {
+                // 跳过嵌套 object/array（协议里不会有，防万一）
+                char open = s[i++];
+                char close = (open == '{') ? '}' : ']';
+                int depth = 1;
+                while (i < s.size() && depth > 0) {
+                    if (s[i] == '"') { parse_string(s, i); continue; }
+                    if (s[i] == open) ++depth;
+                    else if (s[i] == close) --depth;
+                    ++i;
+                }
+            } else {
+                // number：跳过到非数字字符
+                while (i < s.size() && (s[i] == '-' || s[i] == '+' || (s[i] >= '0' && s[i] <= '9') ||
+                                        s[i] == '.' || s[i] == 'e' || s[i] == 'E')) ++i;
+            }
+        }
+        skip_ws(s, i);
+        if (i < s.size() && s[i] == ',') { ++i; continue; }
+        break;
+    }
+    skip_ws(s, i);
+    require(i < s.size() && s[i] == '}', "invalid_request", "unterminated object");
+    ++i;
+    skip_ws(s, i);
+done:
+    require(has_id && has_op, "invalid_request", "id/op required");
+    require(req.op == "execute" ? has_sql : true, "invalid_request", "execute requires SQL string");
+    if (req.op == "execute") {
+        auto m = req.has_search_mode ? req.search_mode : "exact";
+        require(m == "exact" || m == "ann", "invalid_mode", "search_mode must be exact or ann");
+    }
+    return req;
+}
+
 struct Column {
     std::string name, type;
     uint32_t size = 0;
@@ -73,7 +355,7 @@ class Parser {
         const std::string_view input(sql);
         for (size_t i = 0; i < sql.size();) {
             unsigned char c = sql[i];
-            if (std::isspace(c)) {
+            if (char_space(c)) {
                 ++i;
                 continue;
             }
@@ -147,26 +429,26 @@ class Parser {
                 require(closed, "syntax_error", "unterminated quoted token");
                 continue;
             }
-            if (std::isdigit(c) || c == '.') {
+            if (char_digit(c) || c == '.') {
                 size_t start = i++;
                 while (i < sql.size() &&
-                       (std::isdigit(static_cast<unsigned char>(sql[i])) || sql[i] == '.'))
+                       (char_digit(static_cast<unsigned char>(sql[i])) || sql[i] == '.'))
                     ++i;
                 if (i < sql.size() && (sql[i] == 'e' || sql[i] == 'E')) {
                     ++i;
                     if (i < sql.size() && (sql[i] == '+' || sql[i] == '-'))
                         ++i;
-                    while (i < sql.size() && std::isdigit(static_cast<unsigned char>(sql[i])))
+                    while (i < sql.size() && char_digit(static_cast<unsigned char>(sql[i])))
                         ++i;
                 }
                 tokens.push_back({input.substr(start, i - start)});
                 continue;
             }
-            if (std::isalpha(c) || c == '_' || c >= 128) {
+            if (char_alpha(c) || c == '_' || c >= 128) {
                 size_t start = i++;
                 while (i < sql.size()) {
                     unsigned char x = sql[i];
-                    if (!std::isalnum(x) && x != '_' && x < 128)
+                    if (!char_alnum(x) && x != '_' && x < 128)
                         break;
                     ++i;
                 }
